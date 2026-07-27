@@ -15,6 +15,7 @@ from whyhow_api.services.crud.graph_pg import (
     list_all_graphs, get_graph, list_nodes, list_relations, delete_graphs, graphs, workspaces
 )
 from whyhow_api.services.graph_service_pg import build_graph_pg
+from whyhow_api.services.graphrag_service import build_graph_from_workspace_chunks, query_graph
 from whyhow_api.services.crud.user_pg import get_user_by_api_key
 from whyhow_api.services.crud.base_pg import insert_returning
 from whyhow_api.schemas.graphs import CreateGraphBody
@@ -131,6 +132,56 @@ async def create_graph_from_triples_endpoint(
     user_id = await _require_user_id(session, api_key)
     await build_graph_pg(session=session, llm_client=llm_client, graph_id=graph_id, user_id=user_id, triples_in=triples)
     return {"message": "ok", "status": "success"}
+
+
+@router.post("/graphrag/build")
+async def build_graphrag_endpoint(
+    workspace_id: UUID = Query(...),
+    schema_id: UUID = Query(...),
+    name: str = Query("graphrag-demo"),
+    chunk_limit: int = Query(200, ge=1, le=1000),
+    session: AsyncSession = Depends(get_pg),
+    llm_client: LLMClient = Depends(get_llm_client),
+    api_key: str = Header(..., alias="x-api-key"),
+):
+    user_id = await _require_user_id(session, api_key)
+    try:
+        result = await build_graph_from_workspace_chunks(
+            session=session,
+            llm_client=llm_client,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            schema_id=schema_id,
+            graph_name=name,
+            chunk_limit=chunk_limit,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"message": "GraphRAG graph built.", "status": "success", **result}
+
+
+@router.get("/{graph_id}/ask")
+async def ask_graphrag_endpoint(
+    graph_id: UUID,
+    question: str = Query(...),
+    top_k: int = Query(5, ge=1, le=20),
+    session: AsyncSession = Depends(get_pg),
+    llm_client: LLMClient = Depends(get_llm_client),
+    api_key: str = Header(..., alias="x-api-key"),
+):
+    user_id = await _require_user_id(session, api_key)
+    try:
+        result = await query_graph(
+            session=session,
+            llm_client=llm_client,
+            user_id=user_id,
+            graph_id=graph_id,
+            question=question,
+            top_k=top_k,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"message": "ok", "status": "success", **result}
 
 @router.delete("/{graph_id}")
 async def delete_graph_endpoint(

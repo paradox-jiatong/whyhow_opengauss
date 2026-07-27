@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Tuple
 from uuid import UUID
 
 import sqlalchemy as sa
+import sqlalchemy.dialects.postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from whyhow_api.schemas.chunks import ChunksOutWithWorkspaceDetails
@@ -449,4 +450,3 @@ async def get_graph_chunks(
         })
 
     return [ChunksOutWithWorkspaceDetails(**c) for c in out], int(total)
-

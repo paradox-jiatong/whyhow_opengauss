@@ -108,9 +108,12 @@ docker run -d --name whyhow-opengauss \
 .venv/bin/python scripts/init_db.py
 .venv/bin/python -m uvicorn whyhow_api.main:app --host 127.0.0.1 --port 8000
 .venv/bin/python scripts/run_demo.py
+.venv/bin/python scripts/run_graphrag_demo.py
 ```
 
 If no OpenAI API key is configured, the service uses the deterministic local demo provider for embeddings and grounded answers. Configure `WHYHOW__EMBEDDING__OPENAI__API_KEY` and `WHYHOW__GENERATIVE__OPENAI__API_KEY` in `.env` to use OpenAI.
+
+`run_graphrag_demo.py` verifies the GraphRAG path: schema creation, schema-guided triple extraction from chunks, node/triple persistence, graph evidence retrieval, chunk + graph evidence fusion, and reranking.
 
 #### 1. 健康检查
 ```shell
