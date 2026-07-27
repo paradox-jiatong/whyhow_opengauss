@@ -115,7 +115,7 @@ If no OpenAI API key is configured, the service uses the deterministic local dem
 
 The local openGauss Lite image does not include a pgvector-compatible extension, so the demo stores vectors in `FLOAT8[]` columns and ranks them with the database-side `whyhow_cosine_distance` function.
 
-`run_graphrag_demo.py` verifies the GraphRAG path: schema creation, schema-guided triple extraction from chunks, node/triple persistence, four-route rough recall (`vector_chunk`, `keyword_chunk`, `predicate_chunk`, `graph_path`), chunk + node + triple evidence fusion, and LLM reranking.
+`run_graphrag_demo.py` verifies the GraphRAG path: schema creation, schema-guided structured extraction, entity resolution with provenance merge, node/triple persistence, four-route rough recall (`vector_chunk`, `keyword_chunk`, `predicate_chunk`, `graph_path`), 1-hop/2-hop path evidence, chunk + node + triple/path fusion, and structured LLM reranking.
 
 #### 1. 健康检查
 ```shell

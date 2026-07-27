@@ -100,6 +100,10 @@ def main() -> None:
         sys.exit("expected at least two graph triples")
     if not any(item["source"] == "triple" for item in result["evidence"]):
         sys.exit("expected graph triple evidence")
+    if not any(item["source"] == "path" and item.get("hop") in (1, 2) for item in result["evidence"]):
+        sys.exit("expected graph path evidence")
+    if not all("rerank_confidence" in item for item in result["evidence"]):
+        sys.exit("expected structured rerank metadata")
     routes = {route for item in result["evidence"] for route in item.get("routes", [item.get("route")])}
     expected_routes = {"vector_chunk", "keyword_chunk", "predicate_chunk", "graph_path"}
     if not expected_routes.issubset(routes):

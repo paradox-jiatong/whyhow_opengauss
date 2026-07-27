@@ -1,0 +1,140 @@
+"""Schema-guided extraction with structured validation."""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from pydantic import BaseModel, Field, ValidationError
+
+from whyhow_api.models.common import LLMClient
+
+_SUPPORTS_RE = re.compile(
+    r"(?P<head>[A-Za-z][A-Za-z0-9_\-\s]*?|[\u4e00-\u9fff]{2,})\s*(?:还)?(?:支持|具备|提供|supports?)\s*(?P<tail>[^。；;,.，]+)",
+    re.IGNORECASE,
+)
+
+
+class ExtractedNode(BaseModel):
+    name: str = Field(..., min_length=1)
+    type: str = Field(..., min_length=1)
+    aliases: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    source_chunk_id: str = Field(..., min_length=1)
+
+
+class ExtractedTriple(BaseModel):
+    head: str = Field(..., min_length=1)
+    relation: str = Field(..., min_length=1)
+    tail: str = Field(..., min_length=1)
+    head_type: str = Field(..., min_length=1)
+    tail_type: str = Field(..., min_length=1)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    source_chunk_id: str = Field(..., min_length=1)
+
+
+class SchemaExtractionResult(BaseModel):
+    nodes: list[ExtractedNode] = Field(default_factory=list)
+    triples: list[ExtractedTriple] = Field(default_factory=list)
+
+
+def _first_pattern(schema_body: dict[str, Any]) -> tuple[str, str, str] | None:
+    patterns = schema_body.get("patterns") or []
+    if patterns:
+        pattern = patterns[0]
+        return (
+            str(pattern.get("head") or "entity"),
+            str(pattern.get("relation") or "related_to"),
+            str(pattern.get("tail") or "entity"),
+        )
+    relations = schema_body.get("relations") or []
+    if relations:
+        relation = relations[0]
+        return (
+            str(relation.get("head") or "entity"),
+            str(relation.get("name") or "related_to"),
+            str(relation.get("tail") or "entity"),
+        )
+    return None
+
+
+def _split_tails(text: str) -> list[str]:
+    return [item.strip() for item in re.split(r"[、,，和及/]", text) if item.strip()]
+
+
+def deterministic_extract(schema_body: dict[str, Any], chunk_id: str, chunk_text: str) -> SchemaExtractionResult:
+    pattern = _first_pattern(schema_body)
+    if pattern is None:
+        return SchemaExtractionResult()
+
+    head_type, relation, tail_type = pattern
+    nodes: dict[tuple[str, str], ExtractedNode] = {}
+    triples: list[ExtractedTriple] = []
+    seen_triples: set[tuple[str, str, str]] = set()
+
+    for match in _SUPPORTS_RE.finditer(chunk_text):
+        head = match.group("head").strip()
+        nodes.setdefault(
+            (head_type, head.lower()),
+            ExtractedNode(name=head, type=head_type, source_chunk_id=chunk_id),
+        )
+        for tail in _split_tails(match.group("tail")):
+            nodes.setdefault(
+                (tail_type, tail.lower()),
+                ExtractedNode(name=tail, type=tail_type, source_chunk_id=chunk_id),
+            )
+            key = (head.lower(), relation.lower(), tail.lower())
+            if key in seen_triples:
+                continue
+            seen_triples.add(key)
+            triples.append(
+                ExtractedTriple(
+                    head=head,
+                    relation=relation,
+                    tail=tail,
+                    head_type=head_type,
+                    tail_type=tail_type,
+                    confidence=0.95,
+                    source_chunk_id=chunk_id,
+                )
+            )
+
+    return SchemaExtractionResult(nodes=list(nodes.values()), triples=triples)
+
+
+class SchemaGuidedExtractor:
+    async def extract(
+        self,
+        llm_client: LLMClient,
+        schema_body: dict[str, Any],
+        chunk_id: str,
+        chunk_text: str,
+        *,
+        min_confidence: float = 0.5,
+    ) -> SchemaExtractionResult:
+        try:
+            response = await llm_client.client.chat.completions.create(
+                model=llm_client.metadata.language_model_name or "local-demo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Extract schema-constrained knowledge. Return only JSON matching {nodes, triples}.",
+                    },
+                    {
+                        "role": "user",
+                        "content": "SCHEMA_EXTRACT_JSON\n"
+                        f"chunk_id={chunk_id}\n"
+                        f"schema={json.dumps(schema_body, ensure_ascii=False)}\n"
+                        f"chunk={chunk_text}",
+                    },
+                ],
+            )
+            result = SchemaExtractionResult.model_validate_json(response.choices[0].message.content or "{}")
+        except (AttributeError, ValidationError, json.JSONDecodeError, Exception):
+            result = deterministic_extract(schema_body, chunk_id, chunk_text)
+
+        return SchemaExtractionResult(
+            nodes=[node for node in result.nodes if node.confidence >= min_confidence],
+            triples=[triple for triple in result.triples if triple.confidence >= min_confidence],
+        )

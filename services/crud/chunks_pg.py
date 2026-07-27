@@ -25,6 +25,7 @@ from whyhow_api.schemas.chunks import (
     ChunksOutWithWorkspaceDetails, ChunkUnassignments, UpdateChunkModel,
 )
 from whyhow_api.services.crud.base_pg import insert_returning
+from whyhow_api.services.semantic_chunker import semantic_chunk_text
 from whyhow_api.utilities.common import embed_texts
 from whyhow_api.services.vector_store import normalize_embedding
 
@@ -240,17 +241,14 @@ async def get_chunk_basic(
     
 # -------- 文本切块 --------
 def split_text_into_chunks(text: str, page_number: int | None = None) -> List[Dict[str, Any]]:
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings.api.max_chars_per_chunk, chunk_overlap=0
-    )
     chunks_: List[Dict[str, Any]] = []
     loc = 0
-    for d in text_splitter.split_text(text):
-        _length = len(d)
-        meta = {"start": loc, "end": loc + _length}
-        if page_number is not None: meta["page"] = page_number
-        chunks_.append({"content": d, "metadata": meta})
+    for chunk in semantic_chunk_text(text, max_chars=settings.api.max_chars_per_chunk, overlap_chars=120):
+        _length = len(chunk.text)
+        meta = {"start": loc, "end": loc + _length, **chunk.metadata}
+        if page_number is not None:
+            meta["page"] = page_number
+        chunks_.append({"content": chunk.text, "metadata": meta})
         loc += _length
     return chunks_
 

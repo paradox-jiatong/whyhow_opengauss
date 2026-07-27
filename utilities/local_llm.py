@@ -16,6 +16,10 @@ from dataclasses import dataclass
 from typing import Any
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
+_SUPPORTS_RE = re.compile(
+    r"(?P<head>[A-Za-z][A-Za-z0-9_\-\s]*?|[\u4e00-\u9fff]{2,})\s*(?:还)?(?:支持|具备|提供|supports?)\s*(?P<tail>[^。；;,.，]+)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -69,9 +73,53 @@ class _LocalEmbeddings:
 class _LocalCompletions:
     async def create(self, *, messages: list[dict[str, str]], **_: Any) -> _ChatResponse:
         user_message = next((message.get("content", "") for message in reversed(messages) if message.get("role") == "user"), "")
+        if "SCHEMA_EXTRACT_JSON" in user_message:
+            chunk_id = re.search(r"chunk_id=([^\n]+)", user_message)
+            schema = re.search(r"schema=(.+)\nchunk=", user_message, flags=re.DOTALL)
+            chunk = user_message.split("\nchunk=", 1)[-1]
+            schema_body = json.loads(schema.group(1)) if schema else {}
+            pattern = (schema_body.get("patterns") or [None])[0]
+            relation_def = (schema_body.get("relations") or [None])[0]
+            source = pattern or relation_def or {}
+            head_type = source.get("head") or "entity"
+            relation = source.get("relation") or source.get("name") or "related_to"
+            tail_type = source.get("tail") or "entity"
+            nodes = []
+            triples = []
+            seen_nodes = set()
+            for match in _SUPPORTS_RE.finditer(chunk):
+                head = match.group("head").strip()
+                tails = [item.strip() for item in re.split(r"[、,，和及/]", match.group("tail")) if item.strip()]
+                if (head_type, head.lower()) not in seen_nodes:
+                    seen_nodes.add((head_type, head.lower()))
+                    nodes.append({"name": head, "type": head_type, "aliases": [], "confidence": 0.95, "source_chunk_id": chunk_id.group(1) if chunk_id else "chunk"})
+                for tail in tails:
+                    if (tail_type, tail.lower()) not in seen_nodes:
+                        seen_nodes.add((tail_type, tail.lower()))
+                        nodes.append({"name": tail, "type": tail_type, "aliases": [], "confidence": 0.95, "source_chunk_id": chunk_id.group(1) if chunk_id else "chunk"})
+                    triples.append({
+                        "head": head,
+                        "relation": relation,
+                        "tail": tail,
+                        "head_type": head_type,
+                        "tail_type": tail_type,
+                        "confidence": 0.95,
+                        "source_chunk_id": chunk_id.group(1) if chunk_id else "chunk",
+                    })
+            return _ChatResponse(choices=[_Choice(message=_Message(content=json.dumps({"nodes": nodes, "triples": triples}, ensure_ascii=False)))])
         if "RERANK_EVIDENCE_JSON" in user_message:
-            ids = re.findall(r"^\s*\d+\.\s+id=([^\s]+)", user_message, flags=re.MULTILINE)
-            return _ChatResponse(choices=[_Choice(message=_Message(content=json.dumps(ids, ensure_ascii=False)))])
+            rows = re.findall(r"^\s*\d+\.\s+id=([^\s]+)\s+source=([^\s]+).*?text=(.+)$", user_message, flags=re.MULTILINE)
+            question_match = re.search(r"Question:\s*(.+)", user_message)
+            question_terms = set(_tokens(question_match.group(1) if question_match else ""))
+
+            def score(row: tuple[str, str, str]) -> tuple[int, int]:
+                source_weight = {"triple": 5, "path": 5, "node": 2, "chunk": 0}.get(row[1], 0)
+                overlap = len(question_terms & set(_tokens(row[2])))
+                return overlap + source_weight, source_weight
+
+            ids = [row[0] for row in sorted(rows, key=score, reverse=True)]
+            payload = {"ranked_ids": ids, "reasons": {item_id: "local deterministic rerank" for item_id in ids}, "confidence": 0.8}
+            return _ChatResponse(choices=[_Choice(message=_Message(content=json.dumps(payload, ensure_ascii=False)))])
         context = user_message.split("可用上下文：", 1)[-1].strip() if "可用上下文：" in user_message else user_message
         first_context_line = next((line.strip("- ").strip() for line in context.splitlines() if line.strip()), "")
         answer = first_context_line or "无法确定。"

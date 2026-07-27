@@ -5,16 +5,20 @@ from __future__ import annotations
 import math
 import json
 import re
-from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
+from pydantic import BaseModel, Field, ValidationError
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from whyhow_api.models.common import LLMClient, Triple
 from whyhow_api.services.crud.graph_pg import graphs, nodes, triples
+from whyhow_api.services.entity_resolver import EntityResolver
 from whyhow_api.services.graph_service_pg import build_graph_pg
+from whyhow_api.services.graph_path_retriever import retrieve_graph_paths
+from whyhow_api.services.retrieval_models import Evidence, RetrievalCandidate
+from whyhow_api.services.schema_extractor import SchemaGuidedExtractor
 from whyhow_api.services.vector_store import ensure_vector_support, normalize_embedding, vector_search_chunks, vector_search_triples
 from whyhow_api.utilities.common import embed_texts
 
@@ -23,23 +27,6 @@ _SUPPORTS_RE = re.compile(
     r"(?P<head>[A-Za-z][A-Za-z0-9_\-]*|[\u4e00-\u9fff]{2,})\s*(?:还)?(?:支持|具备|提供|supports?)\s*(?P<tail>[^。；;,.，]+)",
     re.IGNORECASE,
 )
-
-
-@dataclass(frozen=True)
-class Evidence:
-    source: str
-    text: str
-    score: float
-    payload: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class RetrievalCandidate:
-    route: str
-    source: str
-    text: str
-    score: float
-    payload: dict[str, Any]
 
 
 def _normalize_entity(text: str) -> str:
@@ -166,6 +153,19 @@ def rerank_evidence(question: str, items: list[Evidence], top_k: int) -> list[Ev
     return sorted(items, key=score, reverse=True)[:top_k]
 
 
+class RerankResult(BaseModel):
+    ranked_ids: list[str] = Field(default_factory=list)
+    reasons: dict[str, str] = Field(default_factory=dict)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+def _parse_rerank_result(content: str) -> RerankResult:
+    parsed = json.loads(content or "{}")
+    if isinstance(parsed, list):
+        return RerankResult(ranked_ids=[str(item) for item in parsed], confidence=0.5)
+    return RerankResult.model_validate(parsed)
+
+
 async def llm_rerank_evidence(
     llm_client: LLMClient,
     *,
@@ -196,12 +196,16 @@ async def llm_rerank_evidence(
                 },
             ],
         )
-        ranked_ids = json.loads(response.choices[0].message.content or "[]")
+        result = _parse_rerank_result(response.choices[0].message.content or "{}")
         out: list[Evidence] = []
-        for item_id in ranked_ids:
+        for item_id in result.ranked_ids:
             item = id_to_item.get(str(item_id))
             if item and item not in out:
-                out.append(item)
+                payload = {**item.payload}
+                if result.reasons.get(str(item_id)):
+                    payload["rerank_reason"] = result.reasons[str(item_id)]
+                payload["rerank_confidence"] = result.confidence
+                out.append(Evidence(item.source, item.text, item.score, payload))
             if len(out) >= top_k:
                 break
         for item in pre_ranked:
@@ -210,7 +214,7 @@ async def llm_rerank_evidence(
             if len(out) >= top_k:
                 break
         return out[:top_k]
-    except Exception:
+    except (json.JSONDecodeError, ValidationError, Exception):
         return pre_ranked[:top_k]
 
 
@@ -258,7 +262,19 @@ async def build_graph_from_workspace_chunks(
         {"user_id": user_id, "ws_id": workspace_id},
     )).mappings().all()
 
-    extracted = await extract_schema_guided_triples(schema_row["body"] or {}, [dict(row) for row in rows])
+    extraction_results = []
+    extractor = SchemaGuidedExtractor()
+    schema_body = schema_row["body"] or {}
+    for row in rows:
+        extraction_results.append(
+            await extractor.extract(
+                llm_client=llm_client,
+                schema_body=schema_body,
+                chunk_id=str(row["id"]),
+                chunk_text=row["content"] or str(row["content_obj"] or ""),
+            )
+        )
+    extracted = EntityResolver(schema_body).to_triples(extraction_results)
     if extracted:
         await build_graph_pg(session=session, llm_client=llm_client, graph_id=graph_row["id"], user_id=user_id, triples_in=extracted)
 
@@ -388,6 +404,17 @@ async def query_graph(
                 payload={"id": str(row["id"]), "chunks": [str(c) for c in row["chunks"] or []]},
             )
         )
+
+    candidates.extend(
+        await retrieve_graph_paths(
+            session,
+            user_id=user_id,
+            graph_id=graph_id,
+            question=question,
+            top_k=top_k * 2,
+            max_hops=2,
+        )
+    )
 
     hn = nodes.alias("hn")
     tn = nodes.alias("tn")
