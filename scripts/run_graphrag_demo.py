@@ -81,7 +81,7 @@ def main() -> None:
     result = request(
         "GET",
         f"/graphs/{graph_id}/ask?"
-        + urllib.parse.urlencode({"question": "openGauss 支持什么能力？", "top_k": 5}),
+        + urllib.parse.urlencode({"question": "openGauss 支持什么能力？", "top_k": 5, "tags": "opengauss"}),
     )
 
     output = {
@@ -100,6 +100,10 @@ def main() -> None:
         sys.exit("expected at least two graph triples")
     if not any(item["source"] == "triple" for item in result["evidence"]):
         sys.exit("expected graph triple evidence")
+    routes = {route for item in result["evidence"] for route in item.get("routes", [item.get("route")])}
+    expected_routes = {"vector_chunk", "keyword_chunk", "predicate_chunk", "graph_path"}
+    if not expected_routes.issubset(routes):
+        sys.exit(f"expected four rough recall routes, got {sorted(routes)}")
 
 
 if __name__ == "__main__":

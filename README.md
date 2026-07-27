@@ -113,7 +113,9 @@ docker run -d --name whyhow-opengauss \
 
 If no OpenAI API key is configured, the service uses the deterministic local demo provider for embeddings and grounded answers. Configure `WHYHOW__EMBEDDING__OPENAI__API_KEY` and `WHYHOW__GENERATIVE__OPENAI__API_KEY` in `.env` to use OpenAI.
 
-`run_graphrag_demo.py` verifies the GraphRAG path: schema creation, schema-guided triple extraction from chunks, node/triple persistence, graph evidence retrieval, chunk + graph evidence fusion, and reranking.
+The local openGauss Lite image does not include a pgvector-compatible extension, so the demo stores vectors in `FLOAT8[]` columns and ranks them with the database-side `whyhow_cosine_distance` function.
+
+`run_graphrag_demo.py` verifies the GraphRAG path: schema creation, schema-guided triple extraction from chunks, node/triple persistence, four-route rough recall (`vector_chunk`, `keyword_chunk`, `predicate_chunk`, `graph_path`), chunk + node + triple evidence fusion, and LLM reranking.
 
 #### 1. 健康检查
 ```shell

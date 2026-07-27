@@ -9,6 +9,7 @@ the production call shape.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -68,6 +69,9 @@ class _LocalEmbeddings:
 class _LocalCompletions:
     async def create(self, *, messages: list[dict[str, str]], **_: Any) -> _ChatResponse:
         user_message = next((message.get("content", "") for message in reversed(messages) if message.get("role") == "user"), "")
+        if "RERANK_EVIDENCE_JSON" in user_message:
+            ids = re.findall(r"^\s*\d+\.\s+id=([^\s]+)", user_message, flags=re.MULTILINE)
+            return _ChatResponse(choices=[_Choice(message=_Message(content=json.dumps(ids, ensure_ascii=False)))])
         context = user_message.split("可用上下文：", 1)[-1].strip() if "可用上下文：" in user_message else user_message
         first_context_line = next((line.strip("- ").strip() for line in context.splitlines() if line.strip()), "")
         answer = first_context_line or "无法确定。"

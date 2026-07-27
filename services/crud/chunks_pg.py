@@ -26,6 +26,7 @@ from whyhow_api.schemas.chunks import (
 )
 from whyhow_api.services.crud.base_pg import insert_returning
 from whyhow_api.utilities.common import embed_texts
+from whyhow_api.services.vector_store import normalize_embedding
 
 logger = logging.getLogger(__name__)
 settings = Settings()
@@ -42,6 +43,7 @@ chunks = sa.Table(
     sa.Column("content", sa.Text),
     sa.Column("content_obj", sa.JSON),
     sa.Column("embedding", sa.JSON),
+    sa.Column("embedding_vector", sa.ARRAY(sa.Float)),
     sa.Column("tags", sa.JSON, nullable=False),
     sa.Column("user_metadata", sa.JSON, nullable=False),
     sa.Column("metadata", sa.JSON, nullable=False),
@@ -317,6 +319,7 @@ async def add_chunks(
             "content": c.content if c.data_type == "string" else None,
             "content_obj": None if c.data_type == "string" else c.content,
             "embedding": embeddings[idx],
+            "embedding_vector": normalize_embedding(embeddings[idx]),
             "tags": c.tags or {},
             "user_metadata": c.user_metadata or {},
             "metadata": (
@@ -698,7 +701,7 @@ async def rebuild_chunk_embeddings(
             await session.execute(
                 sa.update(chunks)
                   .where(chunks.c.id == bid)
-                  .values(embedding=v, updated_at=sa.func.now())
+                  .values(embedding=v, embedding_vector=normalize_embedding(v), updated_at=sa.func.now())
             )
             updated += 1
 

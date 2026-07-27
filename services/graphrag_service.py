@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from whyhow_api.models.common import LLMClient, Triple
 from whyhow_api.services.crud.graph_pg import graphs, nodes, triples
 from whyhow_api.services.graph_service_pg import build_graph_pg
+from whyhow_api.services.vector_store import ensure_vector_support, normalize_embedding, vector_search_chunks, vector_search_triples
 from whyhow_api.utilities.common import embed_texts
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+")
@@ -25,6 +27,15 @@ _SUPPORTS_RE = re.compile(
 
 @dataclass(frozen=True)
 class Evidence:
+    source: str
+    text: str
+    score: float
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RetrievalCandidate:
+    route: str
     source: str
     text: str
     score: float
@@ -46,6 +57,37 @@ def _cosine(a: list[float], b: list[float]) -> float:
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     return dot / (na * nb) if na and nb else -1.0
+
+
+def _chunk_text(row: dict[str, Any]) -> str:
+    return row.get("content") or str(row.get("content_obj") or "")
+
+
+def _candidate_key(item: RetrievalCandidate) -> tuple[str, str]:
+    return item.source, str(item.payload.get("id") or item.text)
+
+
+def fuse_rough_recall_candidates(candidates: list[RetrievalCandidate]) -> list[RetrievalCandidate]:
+    best: dict[tuple[str, str], RetrievalCandidate] = {}
+    routes_by_key: dict[tuple[str, str], set[str]] = {}
+    for item in candidates:
+        key = _candidate_key(item)
+        routes_by_key.setdefault(key, set()).add(item.route)
+        current = best.get(key)
+        if current is None or item.score > current.score:
+            best[key] = item
+    route_weight = {"vector_chunk": 0.35, "keyword_chunk": 0.25, "graph_path": 0.45, "predicate_chunk": 0.05}
+    merged = [
+        RetrievalCandidate(
+            route=item.route,
+            source=item.source,
+            text=item.text,
+            score=item.score,
+            payload={**item.payload, "routes": sorted(routes_by_key.get(key, {item.route}))},
+        )
+        for key, item in best.items()
+    ]
+    return sorted(merged, key=lambda item: item.score + route_weight.get(item.route, 0.0), reverse=True)
 
 
 def _first_pattern(schema_body: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -124,6 +166,54 @@ def rerank_evidence(question: str, items: list[Evidence], top_k: int) -> list[Ev
     return sorted(items, key=score, reverse=True)[:top_k]
 
 
+async def llm_rerank_evidence(
+    llm_client: LLMClient,
+    *,
+    question: str,
+    items: list[Evidence],
+    top_k: int,
+) -> list[Evidence]:
+    pre_ranked = rerank_evidence(question, items, top_k=min(len(items), max(top_k * 4, top_k)))
+    if not pre_ranked:
+        return []
+
+    id_to_item = {str(item.payload.get("id") or idx): item for idx, item in enumerate(pre_ranked)}
+    lines = [
+        f"{idx}. id={item_id} source={item.source} route={item.payload.get('route')} text={item.text[:500]}"
+        for idx, (item_id, item) in enumerate(id_to_item.items(), start=1)
+    ]
+    try:
+        response = await llm_client.client.chat.completions.create(
+            model=llm_client.metadata.language_model_name or "local-demo",
+            messages=[
+                {"role": "system", "content": "Rerank evidence for a RAG answer. Return only a JSON array of ids."},
+                {
+                    "role": "user",
+                    "content": "RERANK_EVIDENCE_JSON\n"
+                    f"Question: {question}\n"
+                    "Prefer evidence that directly answers the question and is grounded in graph triples when relevant.\n"
+                    + "\n".join(lines),
+                },
+            ],
+        )
+        ranked_ids = json.loads(response.choices[0].message.content or "[]")
+        out: list[Evidence] = []
+        for item_id in ranked_ids:
+            item = id_to_item.get(str(item_id))
+            if item and item not in out:
+                out.append(item)
+            if len(out) >= top_k:
+                break
+        for item in pre_ranked:
+            if item not in out:
+                out.append(item)
+            if len(out) >= top_k:
+                break
+        return out[:top_k]
+    except Exception:
+        return pre_ranked[:top_k]
+
+
 async def build_graph_from_workspace_chunks(
     session: AsyncSession,
     llm_client: LLMClient,
@@ -134,6 +224,7 @@ async def build_graph_from_workspace_chunks(
     graph_name: str,
     chunk_limit: int = 200,
 ) -> dict[str, Any]:
+    await ensure_vector_support(session)
     schema_row = (await session.execute(
         sa.text("SELECT body FROM schemas WHERE id = :schema_id AND created_by = :user_id"),
         {"schema_id": schema_id, "user_id": user_id},
@@ -191,7 +282,9 @@ async def query_graph(
     graph_id: UUID,
     question: str,
     top_k: int,
+    filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    await ensure_vector_support(session)
     graph_row = (await session.execute(
         sa.select(graphs).where(graphs.c.id == graph_id, graphs.c.created_by == user_id)
     )).mappings().first()
@@ -199,25 +292,102 @@ async def query_graph(
         raise ValueError("Graph not found")
 
     qv = (await embed_texts(llm_client=llm_client, texts=[question]))[0]
+    filters = filters or {}
     workspace_id = graph_row["workspace_id"]
     ws_bind = sa.bindparam("ws_id", workspace_id)
+    candidates: list[RetrievalCandidate] = []
+
+    for row in await vector_search_chunks(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        query_vector=normalize_embedding(qv),
+        top_k=top_k * 2,
+        filters=filters,
+    ):
+        candidates.append(
+            RetrievalCandidate(
+                route="vector_chunk",
+                source="chunk",
+                text=_chunk_text(row),
+                score=float(row.get("score") or 0.0),
+                payload={"id": str(row["id"])},
+            )
+        )
 
     chunk_rows = (await session.execute(
         sa.select(sa.text("id"), sa.text("content"), sa.text("content_obj"), sa.text("embedding"))
         .select_from(sa.text("chunks"))
         .where(sa.text("created_by = :user_id"))
         .where(sa.cast(ws_bind, sa.dialects.postgresql.UUID(as_uuid=True)) == sa.any_(sa.column("workspaces")))
+        .where(sa.text("document_id = CAST(:document_id AS UUID)") if filters.get("document_id") else sa.true())
+        .where(sa.text("CAST(tags AS TEXT) LIKE :tag_filter") if filters.get("tags") else sa.true())
         .limit(200),
-        {"user_id": user_id, "ws_id": workspace_id},
+        {
+            "user_id": user_id,
+            "ws_id": workspace_id,
+            "document_id": str(filters.get("document_id") or ""),
+            "tag_filter": f"%{(filters.get('tags') or [''])[0]}%",
+        },
     )).mappings().all()
 
-    evidences: list[Evidence] = []
+    question_terms = _tokens(question)
     for row in chunk_rows:
-        emb = row["embedding"]
-        if isinstance(emb, dict):
-            emb = emb.get("vector")
         chunk_text = row["content"] or str(row["content_obj"] or "")
-        evidences.append(Evidence("chunk", chunk_text, _cosine(qv, emb if isinstance(emb, list) else []), {"id": str(row["id"])}))
+        keyword_score = len(question_terms & _tokens(chunk_text))
+        if keyword_score:
+            candidates.append(
+                RetrievalCandidate(
+                    route="keyword_chunk",
+                    source="chunk",
+                    text=chunk_text,
+                    score=float(keyword_score),
+                    payload={"id": str(row["id"])},
+                )
+            )
+        candidates.append(
+            RetrievalCandidate(
+                route="predicate_chunk",
+                source="chunk",
+                text=chunk_text,
+                score=0.1,
+                payload={"id": str(row["id"])},
+            )
+        )
+
+    if not any(item.route == "vector_chunk" for item in candidates):
+        for row in chunk_rows:
+            chunk_text = row["content"] or str(row["content_obj"] or "")
+            emb = row["embedding"]
+            if isinstance(emb, dict):
+                emb = emb.get("vector")
+            if isinstance(emb, list):
+                candidates.append(
+                    RetrievalCandidate(
+                        route="vector_chunk",
+                        source="chunk",
+                        text=chunk_text,
+                        score=_cosine(qv, emb),
+                        payload={"id": str(row["id"]), "fallback": "json_cosine"},
+                    )
+                )
+
+    for row in await vector_search_triples(
+        session,
+        user_id=user_id,
+        graph_id=graph_id,
+        query_vector=normalize_embedding(qv),
+        top_k=top_k * 2,
+    ):
+        candidates.append(
+            RetrievalCandidate(
+                route="graph_path",
+                source="triple",
+                text=f'{row["head"]} {row["relation_name"]} {row["tail"]}',
+                score=float(row.get("score") or 0.0),
+                payload={"id": str(row["id"]), "chunks": [str(c) for c in row["chunks"] or []]},
+            )
+        )
 
     hn = nodes.alias("hn")
     tn = nodes.alias("tn")
@@ -237,16 +407,38 @@ async def query_graph(
 
     for row in triple_rows:
         text = f'{row["head"]} {row["relation_name"]} {row["tail"]}'
-        evidences.append(Evidence("triple", text, 0.0, {"id": str(row["id"]), "chunks": [str(c) for c in row["chunks"] or []]}))
+        candidates.append(
+            RetrievalCandidate(
+                route="graph_path",
+                source="triple",
+                text=text,
+                score=float(len(question_terms & _tokens(text))),
+                payload={"id": str(row["id"]), "chunks": [str(c) for c in row["chunks"] or []]},
+            )
+        )
 
     node_rows = (await session.execute(
         sa.select(nodes.c.id, nodes.c.name, nodes.c.label, nodes.c.chunks)
         .where(nodes.c.graph_id == graph_id, nodes.c.created_by == user_id)
     )).mappings().all()
     for row in node_rows:
-        evidences.append(Evidence("node", f'{row["name"]} ({row["label"]})', 0.0, {"id": str(row["id"]), "chunks": [str(c) for c in row["chunks"] or []]}))
+        text = f'{row["name"]} ({row["label"]})'
+        if question_terms & _tokens(text):
+            candidates.append(
+                RetrievalCandidate(
+                    route="graph_path",
+                    source="node",
+                    text=text,
+                    score=float(len(question_terms & _tokens(text))),
+                    payload={"id": str(row["id"]), "chunks": [str(c) for c in row["chunks"] or []]},
+                )
+            )
 
-    ranked = rerank_evidence(question, evidences, top_k=top_k)
+    evidences = [
+        Evidence(item.source, item.text, item.score, {"route": item.route, **item.payload})
+        for item in fuse_rough_recall_candidates(candidates)
+    ]
+    ranked = await llm_rerank_evidence(llm_client, question=question, items=evidences, top_k=top_k)
     context = "\n".join(f"- [{item.source}] {item.text}" for item in ranked)
     response = await llm_client.client.chat.completions.create(
         model=llm_client.metadata.language_model_name or "local-demo",

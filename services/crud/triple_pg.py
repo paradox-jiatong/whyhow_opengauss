@@ -13,6 +13,7 @@ from whyhow_api.models.common import LLMClient
 from whyhow_api.schemas.chunks import ChunksOutWithWorkspaceDetails
 from whyhow_api.schemas.triples import TripleDocumentModel
 from whyhow_api.utilities.common import embed_texts
+from whyhow_api.services.vector_store import normalize_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ triples = sa.Table(
     sa.Column("chunks", sa.ARRAY(UUIDT), nullable=False),
     sa.Column("created_by", UUIDT, nullable=False),
     sa.Column("embedding", sa.JSON, nullable=True), 
+    sa.Column("embedding_vector", sa.ARRAY(sa.Float), nullable=True),
 )
 
 nodes = sa.Table(
@@ -316,7 +318,10 @@ async def update_triple_embeddings(
 
     for tid, vec in zip(ids, vectors):
         await session.execute(
-            sa.update(triples).where(triples.c.id == tid).values(embedding=vec)
+            sa.update(triples).where(triples.c.id == tid).values(
+                embedding=vec,
+                embedding_vector=normalize_embedding(vec),
+            )
         )
     await session.commit()
     return len(ids)

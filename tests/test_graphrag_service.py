@@ -2,7 +2,9 @@ import asyncio
 
 from whyhow_api.services.graphrag_service import (
     Evidence,
+    RetrievalCandidate,
     extract_schema_guided_triples,
+    fuse_rough_recall_candidates,
     rerank_evidence,
 )
 
@@ -46,3 +48,23 @@ def test_rerank_evidence_prefers_items_matching_question_terms():
     ranked = rerank_evidence("openGauss 的 SQL 能力是什么？", items, top_k=2)
 
     assert ranked[0].source == "triple"
+
+
+def test_fuse_rough_recall_candidates_keeps_four_routes_and_deduplicates():
+    candidates = [
+        RetrievalCandidate(route="vector_chunk", source="chunk", text="openGauss 支持 SQL 查询", score=0.9, payload={"id": "c1"}),
+        RetrievalCandidate(route="keyword_chunk", source="chunk", text="openGauss 支持 SQL 查询", score=0.6, payload={"id": "c1"}),
+        RetrievalCandidate(route="graph_path", source="triple", text="opengauss supports SQL 查询", score=0.7, payload={"id": "t1"}),
+        RetrievalCandidate(route="predicate_chunk", source="chunk", text="openGauss 标签命中", score=0.5, payload={"id": "c2"}),
+    ]
+
+    fused = fuse_rough_recall_candidates(candidates)
+
+    assert {route for item in fused for route in item.payload["routes"]} == {
+        "vector_chunk",
+        "keyword_chunk",
+        "graph_path",
+        "predicate_chunk",
+    }
+    assert len([item for item in fused if item.payload["id"] == "c1"]) == 1
+    assert fused[0].route == "vector_chunk"

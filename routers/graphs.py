@@ -165,11 +165,18 @@ async def ask_graphrag_endpoint(
     graph_id: UUID,
     question: str = Query(...),
     top_k: int = Query(5, ge=1, le=20),
+    document_id: UUID | None = Query(None),
+    tags: str | None = Query(None),
     session: AsyncSession = Depends(get_pg),
     llm_client: LLMClient = Depends(get_llm_client),
     api_key: str = Header(..., alias="x-api-key"),
 ):
     user_id = await _require_user_id(session, api_key)
+    filters = {}
+    if document_id:
+        filters["document_id"] = document_id
+    if tags:
+        filters["tags"] = [tag.strip() for tag in tags.split(",") if tag.strip()]
     try:
         result = await query_graph(
             session=session,
@@ -178,6 +185,7 @@ async def ask_graphrag_endpoint(
             graph_id=graph_id,
             question=question,
             top_k=top_k,
+            filters=filters,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

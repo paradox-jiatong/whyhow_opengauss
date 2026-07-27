@@ -95,6 +95,7 @@ triples = sa.Table(
     sa.Column("chunks", sa.ARRAY(UUIDT), nullable=False),
     sa.Column("created_by", UUIDT, nullable=False),
     sa.Column("embedding", sa.JSON),
+    sa.Column("embedding_vector", sa.ARRAY(sa.Float)),
     sa.Column("created_at", sa.DateTime(timezone=True)),
     sa.Column("updated_at", sa.DateTime(timezone=True)),
 )

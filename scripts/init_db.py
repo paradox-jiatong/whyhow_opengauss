@@ -87,6 +87,7 @@ DDL = [
       content TEXT,
       content_obj JSON,
       embedding JSON,
+      embedding_vector FLOAT8[],
       tags JSON NOT NULL DEFAULT '{}'::JSON,
       user_metadata JSON NOT NULL DEFAULT '{}'::JSON,
       metadata JSON NOT NULL DEFAULT '{}'::JSON,
@@ -119,6 +120,7 @@ DDL = [
       chunks UUID[] NOT NULL DEFAULT '{}',
       created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       embedding JSON,
+      embedding_vector FLOAT8[],
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -170,6 +172,51 @@ async def main() -> None:
     try:
         for statement in DDL:
             await conn.execute(dedent(statement).strip())
+
+        for table_name in ("chunks", "triples"):
+            has_embedding_vector = await conn.fetchval(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = 'embedding_vector'
+                LIMIT 1
+                """,
+                table_name,
+            )
+            if not has_embedding_vector:
+                await conn.execute(f"ALTER TABLE {table_name} ADD COLUMN embedding_vector FLOAT8[]")
+
+        await conn.execute(
+            """
+            CREATE OR REPLACE FUNCTION whyhow_cosine_distance(a FLOAT8[], b FLOAT8[])
+            RETURNS DOUBLE PRECISION AS $$
+            DECLARE
+              dot DOUBLE PRECISION := 0;
+              norm_a DOUBLE PRECISION := 0;
+              norm_b DOUBLE PRECISION := 0;
+              i INTEGER;
+              upper_bound INTEGER;
+            BEGIN
+              IF a IS NULL OR b IS NULL THEN
+                RETURN 1.0;
+              END IF;
+              upper_bound := LEAST(array_length(a, 1), array_length(b, 1));
+              IF upper_bound IS NULL OR upper_bound = 0 THEN
+                RETURN 1.0;
+              END IF;
+              FOR i IN 1..upper_bound LOOP
+                dot := dot + a[i] * b[i];
+                norm_a := norm_a + a[i] * a[i];
+                norm_b := norm_b + b[i] * b[i];
+              END LOOP;
+              IF norm_a = 0 OR norm_b = 0 THEN
+                RETURN 1.0;
+              END IF;
+              RETURN 1.0 - (dot / (sqrt(norm_a) * sqrt(norm_b)));
+            END;
+            $$ LANGUAGE plpgsql IMMUTABLE;
+            """
+        )
 
         has_created_by = await conn.fetchval(
             """
