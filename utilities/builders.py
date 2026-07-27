@@ -8,12 +8,7 @@ import time
 from abc import ABC, abstractmethod
 from json.decoder import JSONDecodeError
 from typing import Any, List, Optional, Tuple, Dict
-import asyncio, json, time, inspect, logging
-from json import JSONDecodeError
 
-import logfire
-import spacy
-import spacy.cli
 from openai.types.chat import ChatCompletion
 
 from whyhow_api.dependencies import LLMClient
@@ -40,6 +35,23 @@ from whyhow_api.models.common import GeneratedSchema
 
 
 logger = logging.getLogger(__name__)
+
+
+try:
+    import logfire
+except ModuleNotFoundError:
+    class _NoopLogfire:
+        @staticmethod
+        def instrument_openai(_: Any) -> None:
+            return None
+
+    logfire = _NoopLogfire()
+
+try:
+    import spacy
+    import spacy.cli
+except ModuleNotFoundError:
+    spacy = None
 
 def _normalize_schema_shape(data: dict[str, Any]) -> tuple[dict[str, list[Any]], list[str]]:
     """把 LLM 返回的 schema 归一化到要求的形状；返回 (fixed_schema, warnings)。"""
@@ -155,9 +167,9 @@ class SpacyEntityExtractor(TextEntityExtractor):
     ):
         self.model_name = model_name
         self.model_disables = model_disables
-        self.model: spacy.language.Language | None = None
+        self.model: Any | None = None
 
-    def download_and_load_spacy_model(self) -> spacy.language.Language:
+    def download_and_load_spacy_model(self) -> Any:
         """Attempt to load a spaCy model by its name.
 
         If the model is not found, it tries to download it
@@ -169,6 +181,8 @@ class SpacyEntityExtractor(TextEntityExtractor):
         Language
             The loaded spaCy model.
         """
+        if spacy is None:
+            raise RuntimeError("spaCy is required for SpacyEntityExtractor. Install the optional spacy dependency.")
         try:
             return spacy.load(
                 name=self.model_name, disable=self.model_disables

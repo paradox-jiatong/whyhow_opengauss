@@ -8,7 +8,6 @@ from collections import defaultdict
 from typing import Any, DefaultDict, Dict, List, Mapping, Sequence, Set, Tuple
 from uuid import UUID
 
-import logfire
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +16,17 @@ from whyhow_api.models.common import LLMClient
 from whyhow_api.schemas.graphs import Triple
 
 logger = logging.getLogger(__name__)
+
+
+try:
+    import logfire
+except ModuleNotFoundError:
+    class _NoopLogfire:
+        @staticmethod
+        def instrument_openai(_: Any) -> None:
+            return None
+
+    logfire = _NoopLogfire()
 
 
 async def embed_texts(

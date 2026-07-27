@@ -92,6 +92,26 @@ uvicorn whyhow_api.main:app --host 0.0.0.0 --port 8000 --reload
 
 ### Quickstart
 
+#### Local demo on macOS
+
+```shell
+uv venv --python 3.11 .venv
+.venv/bin/python -m ensurepip --upgrade
+.venv/bin/python -m pip install -i https://pypi.org/simple -r requirements-demo.txt
+
+colima start --cpu 2 --memory 4 --disk 20
+docker run -d --name whyhow-opengauss \
+  -e GS_PASSWORD='Enmo@123' \
+  -p 5432:5432 \
+  swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/enmotech/opengauss-lite:latest
+
+.venv/bin/python scripts/init_db.py
+.venv/bin/python -m uvicorn whyhow_api.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python scripts/run_demo.py
+```
+
+If no OpenAI API key is configured, the service uses the deterministic local demo provider for embeddings and grounded answers. Configure `WHYHOW__EMBEDDING__OPENAI__API_KEY` and `WHYHOW__GENERATIVE__OPENAI__API_KEY` in `.env` to use OpenAI.
+
 #### 1. 健康检查
 ```shell
 curl -s -H "x-api-key: $KEY" "http://127.0.0.1:8000/db" | jq

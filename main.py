@@ -6,7 +6,6 @@ from logging import basicConfig
 from pathlib import Path
 from typing import Annotated, Any
 
-import logfire
 from asgi_correlation_id import CorrelationIdMiddleware
 from asgi_correlation_id.context import correlation_id
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -38,6 +37,24 @@ from whyhow_api.database import connect_to_pg, close_pg
 from whyhow_api.dependencies import get_settings, get_pg
 
 logger = logging.getLogger("whyhow_api.main")
+
+
+try:
+    import logfire
+except ModuleNotFoundError:
+    class _NoopLogfire:
+        class LogfireLoggingHandler(logging.NullHandler):
+            pass
+
+        @staticmethod
+        def configure(**_: Any) -> None:
+            return None
+
+        @staticmethod
+        def instrument_fastapi(_: FastAPI) -> None:
+            return None
+
+    logfire = _NoopLogfire()
 
 
 @asynccontextmanager

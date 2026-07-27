@@ -34,6 +34,7 @@ from whyhow_api.services.crud.node_pg import get_node
 from whyhow_api.services.crud.triple_pg import get_triple
 from whyhow_api.services.crud.graph_pg import get_graph as get_graph_pg
 from whyhow_api.services.crud.queries_pg import get_query
+from whyhow_api.utilities.local_llm import LocalLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,8 @@ async def get_llm_client(
             logger.error(f"Invalid provider config in PG: {e}")
 
     if settings.generative.openai.api_key is None:
-        raise HTTPException(status_code=401, detail="No LLM provider configured")
+        meta = BYOOpenAIMetadata(language_model_name="local-demo", embedding_name="local-demo")
+        return LLMClient(LocalLLMClient(), meta)
     client = AsyncOpenAI(api_key=settings.generative.openai.api_key.get_secret_value())
     meta = BYOOpenAIMetadata(
         language_model_name=settings.generative.openai.model,
