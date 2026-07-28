@@ -117,6 +117,24 @@ The local openGauss Lite image does not include a pgvector-compatible extension,
 
 `run_graphrag_demo.py` verifies the GraphRAG path: schema creation, schema-guided structured extraction, entity resolution with provenance merge, node/triple persistence, four-route rough recall (`vector_chunk`, `keyword_chunk`, `predicate_chunk`, `graph_path`), 1-hop/2-hop path evidence, chunk + node + triple/path fusion, and structured LLM reranking.
 
+#### Ops Evaluation Dataset
+
+The repository includes a database operations evaluation set under `eval/`:
+
+- `eval/docs/*.md`: raw Markdown documents for chunking and extraction.
+- `eval/gold_graph.jsonl`: expected triples for graph extraction checks.
+- `eval/ops_qa_200.jsonl`: 200 labeled QA cases split as 80 vector, 40 keyword, 40 predicate, and 40 graph-path questions.
+
+Run the end-to-end evaluation through the local API:
+
+```shell
+.venv/bin/python scripts/generate_ops_eval_dataset.py
+.venv/bin/python scripts/load_eval_dataset.py
+.venv/bin/python scripts/eval_retrieval.py --k 5 --limit 1
+```
+
+Omit `--limit` to run all 200 questions. The API evaluation intentionally runs the full GraphRAG path and can be slow in the local openGauss Lite demo. The script reports Hit@K, Recall@K, MRR@K, and P50/P95 latency, and writes details to `eval/eval_results.json`.
+
 #### 1. 健康检查
 ```shell
 curl -s -H "x-api-key: $KEY" "http://127.0.0.1:8000/db" | jq

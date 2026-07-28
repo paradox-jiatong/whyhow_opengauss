@@ -1,0 +1,96 @@
+{"doc_id": "slow_query", "triple": ["慢查询", "支持", "执行计划分析"]}
+{"doc_id": "slow_query", "triple": ["慢查询", "支持", "索引检查"]}
+{"doc_id": "slow_query", "triple": ["慢查询", "支持", "统计信息刷新"]}
+{"doc_id": "slow_query", "triple": ["慢查询", "支持", "SQL 改写"]}
+{"doc_id": "slow_query", "triple": ["慢查询", "可能原因", "缺少索引"]}
+{"doc_id": "slow_query", "triple": ["缺少索引", "导致", "全表扫描"]}
+{"doc_id": "slow_query", "triple": ["慢查询", "可能原因", "统计信息过期"]}
+{"doc_id": "slow_query", "triple": ["统计信息过期", "导致", "执行计划不准"]}
+{"doc_id": "slow_query", "triple": ["慢查询", "可能原因", "锁等待"]}
+{"doc_id": "slow_query", "triple": ["锁等待", "导致", "响应时间增加"]}
+{"doc_id": "slow_query", "triple": ["慢查询", "可能原因", "work_mem 过小"]}
+{"doc_id": "slow_query", "triple": ["work_mem 过小", "导致", "排序落盘"]}
+{"doc_id": "lock_wait", "triple": ["锁等待", "支持", "pg_locks 查询"]}
+{"doc_id": "lock_wait", "triple": ["锁等待", "支持", "pg_stat_activity 分析"]}
+{"doc_id": "lock_wait", "triple": ["锁等待", "支持", "阻塞会话定位"]}
+{"doc_id": "lock_wait", "triple": ["锁等待", "支持", "事务超时控制"]}
+{"doc_id": "lock_wait", "triple": ["锁等待", "可能原因", "长事务"]}
+{"doc_id": "lock_wait", "triple": ["长事务", "导致", "锁释放延迟"]}
+{"doc_id": "lock_wait", "triple": ["锁等待", "可能原因", "DDL 操作"]}
+{"doc_id": "lock_wait", "triple": ["DDL 操作", "导致", "表级锁竞争"]}
+{"doc_id": "lock_wait", "triple": ["锁等待", "可能原因", "热点更新"]}
+{"doc_id": "lock_wait", "triple": ["热点更新", "导致", "行锁冲突"]}
+{"doc_id": "lock_wait", "triple": ["锁等待", "可能原因", "未提交事务"]}
+{"doc_id": "lock_wait", "triple": ["未提交事务", "导致", "会话阻塞"]}
+{"doc_id": "backup_restore", "triple": ["备份恢复", "支持", "全量备份"]}
+{"doc_id": "backup_restore", "triple": ["备份恢复", "支持", "增量备份"]}
+{"doc_id": "backup_restore", "triple": ["备份恢复", "支持", "时间点恢复"]}
+{"doc_id": "backup_restore", "triple": ["备份恢复", "支持", "备份校验"]}
+{"doc_id": "backup_restore", "triple": ["备份恢复", "可能原因", "归档日志缺失"]}
+{"doc_id": "backup_restore", "triple": ["归档日志缺失", "导致", "时间点恢复失败"]}
+{"doc_id": "backup_restore", "triple": ["备份恢复", "可能原因", "备份文件损坏"]}
+{"doc_id": "backup_restore", "triple": ["备份文件损坏", "导致", "恢复中断"]}
+{"doc_id": "backup_restore", "triple": ["备份恢复", "可能原因", "权限不足"]}
+{"doc_id": "backup_restore", "triple": ["权限不足", "导致", "备份任务失败"]}
+{"doc_id": "backup_restore", "triple": ["备份恢复", "可能原因", "存储空间不足"]}
+{"doc_id": "backup_restore", "triple": ["存储空间不足", "导致", "归档失败"]}
+{"doc_id": "vector_index", "triple": ["向量检索", "支持", "Embedding 入库"]}
+{"doc_id": "vector_index", "triple": ["向量检索", "支持", "Top-K 相似度查询"]}
+{"doc_id": "vector_index", "triple": ["向量检索", "支持", "向量距离计算"]}
+{"doc_id": "vector_index", "triple": ["向量检索", "支持", "元数据过滤"]}
+{"doc_id": "vector_index", "triple": ["向量检索", "可能原因", "维度过高"]}
+{"doc_id": "vector_index", "triple": ["维度过高", "导致", "计算开销增加"]}
+{"doc_id": "vector_index", "triple": ["向量检索", "可能原因", "过滤条件过宽"]}
+{"doc_id": "vector_index", "triple": ["过滤条件过宽", "导致", "候选集变大"]}
+{"doc_id": "vector_index", "triple": ["向量检索", "可能原因", "索引缺失"]}
+{"doc_id": "vector_index", "triple": ["索引缺失", "导致", "召回延迟增加"]}
+{"doc_id": "vector_index", "triple": ["向量检索", "可能原因", "向量未归一"]}
+{"doc_id": "vector_index", "triple": ["向量未归一", "导致", "相似度偏差"]}
+{"doc_id": "sql_plan", "triple": ["执行计划", "支持", "Join 顺序分析"]}
+{"doc_id": "sql_plan", "triple": ["执行计划", "支持", "谓词下推"]}
+{"doc_id": "sql_plan", "triple": ["执行计划", "支持", "索引选择"]}
+{"doc_id": "sql_plan", "triple": ["执行计划", "支持", "代价估算"]}
+{"doc_id": "sql_plan", "triple": ["执行计划", "可能原因", "统计信息不准确"]}
+{"doc_id": "sql_plan", "triple": ["统计信息不准确", "导致", "错误 Join 顺序"]}
+{"doc_id": "sql_plan", "triple": ["执行计划", "可能原因", "函数包裹列"]}
+{"doc_id": "sql_plan", "triple": ["函数包裹列", "导致", "索引失效"]}
+{"doc_id": "sql_plan", "triple": ["执行计划", "可能原因", "隐式类型转换"]}
+{"doc_id": "sql_plan", "triple": ["隐式类型转换", "导致", "过滤条件失效"]}
+{"doc_id": "sql_plan", "triple": ["执行计划", "可能原因", "返回行估计偏差"]}
+{"doc_id": "sql_plan", "triple": ["返回行估计偏差", "导致", "计划选择错误"]}
+{"doc_id": "memory_config", "triple": ["内存配置", "支持", "work_mem 调整"]}
+{"doc_id": "memory_config", "triple": ["内存配置", "支持", "shared_buffers 配置"]}
+{"doc_id": "memory_config", "triple": ["内存配置", "支持", "排序内存控制"]}
+{"doc_id": "memory_config", "triple": ["内存配置", "支持", "Hash Join 内存控制"]}
+{"doc_id": "memory_config", "triple": ["内存配置", "可能原因", "work_mem 过小"]}
+{"doc_id": "memory_config", "triple": ["work_mem 过小", "导致", "排序落盘"]}
+{"doc_id": "memory_config", "triple": ["内存配置", "可能原因", "shared_buffers 过低"]}
+{"doc_id": "memory_config", "triple": ["shared_buffers 过低", "导致", "缓存命中下降"]}
+{"doc_id": "memory_config", "triple": ["内存配置", "可能原因", "并发过高"]}
+{"doc_id": "memory_config", "triple": ["并发过高", "导致", "内存争用"]}
+{"doc_id": "memory_config", "triple": ["内存配置", "可能原因", "Hash 表过大"]}
+{"doc_id": "memory_config", "triple": ["Hash 表过大", "导致", "临时文件增加"]}
+{"doc_id": "connection_pool", "triple": ["连接池", "支持", "最大连接数控制"]}
+{"doc_id": "connection_pool", "triple": ["连接池", "支持", "空闲连接回收"]}
+{"doc_id": "connection_pool", "triple": ["连接池", "支持", "连接复用"]}
+{"doc_id": "connection_pool", "triple": ["连接池", "支持", "会话超时配置"]}
+{"doc_id": "connection_pool", "triple": ["连接池", "可能原因", "连接泄漏"]}
+{"doc_id": "connection_pool", "triple": ["连接泄漏", "导致", "连接数耗尽"]}
+{"doc_id": "connection_pool", "triple": ["连接池", "可能原因", "池大小过小"]}
+{"doc_id": "connection_pool", "triple": ["池大小过小", "导致", "请求排队"]}
+{"doc_id": "connection_pool", "triple": ["连接池", "可能原因", "空闲事务"]}
+{"doc_id": "connection_pool", "triple": ["空闲事务", "导致", "锁资源占用"]}
+{"doc_id": "connection_pool", "triple": ["连接池", "可能原因", "认证失败"]}
+{"doc_id": "connection_pool", "triple": ["认证失败", "导致", "连接建立失败"]}
+{"doc_id": "vacuum_stats", "triple": ["表维护", "支持", "统计信息采集"]}
+{"doc_id": "vacuum_stats", "triple": ["表维护", "支持", "垃圾回收"]}
+{"doc_id": "vacuum_stats", "triple": ["表维护", "支持", "膨胀检查"]}
+{"doc_id": "vacuum_stats", "triple": ["表维护", "支持", "自动维护任务"]}
+{"doc_id": "vacuum_stats", "triple": ["表维护", "可能原因", "统计信息过期"]}
+{"doc_id": "vacuum_stats", "triple": ["统计信息过期", "导致", "执行计划不准"]}
+{"doc_id": "vacuum_stats", "triple": ["表维护", "可能原因", "死元组过多"]}
+{"doc_id": "vacuum_stats", "triple": ["死元组过多", "导致", "扫描成本增加"]}
+{"doc_id": "vacuum_stats", "triple": ["表维护", "可能原因", "自动维护关闭"]}
+{"doc_id": "vacuum_stats", "triple": ["自动维护关闭", "导致", "表膨胀"]}
+{"doc_id": "vacuum_stats", "triple": ["表维护", "可能原因", "高频更新"]}
+{"doc_id": "vacuum_stats", "triple": ["高频更新", "导致", "索引膨胀"]}

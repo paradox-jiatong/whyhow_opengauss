@@ -44,6 +44,31 @@ def test_schema_guided_extractor_returns_validated_nodes_triples_and_confidence(
     asyncio.run(run())
 
 
+def test_schema_guided_extractor_handles_ops_cause_and_effect_relations():
+    async def run():
+        schema = {
+            "entities": [{"name": "topic"}, {"name": "cause"}, {"name": "effect"}],
+            "relations": [
+                {"name": "可能原因", "head": "topic", "tail": "cause"},
+                {"name": "导致", "head": "cause", "tail": "effect"},
+            ],
+        }
+
+        result = await SchemaGuidedExtractor().extract(
+            llm_client=_llm_client(),
+            schema_body=schema,
+            chunk_id="c_ops",
+            chunk_text="慢查询 可能原因 缺少索引。缺少索引 导致 全表扫描。",
+        )
+
+        assert [(triple.head, triple.relation, triple.tail) for triple in result.triples] == [
+            ("慢查询", "可能原因", "缺少索引"),
+            ("缺少索引", "导致", "全表扫描"),
+        ]
+
+    asyncio.run(run())
+
+
 def test_entity_resolver_applies_aliases_type_aware_dedup_and_provenance_merge():
     async def run():
         schema = {

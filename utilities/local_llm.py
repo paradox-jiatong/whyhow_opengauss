@@ -20,6 +20,8 @@ _SUPPORTS_RE = re.compile(
     r"(?P<head>[A-Za-z][A-Za-z0-9_\-\s]*?|[\u4e00-\u9fff]{2,})\s*(?:还)?(?:支持|具备|提供|supports?)\s*(?P<tail>[^。；;,.，]+)",
     re.IGNORECASE,
 )
+_CAUSE_RE = re.compile(r"(?P<head>[A-Za-z][A-Za-z0-9_\-\s]*?|[\u4e00-\u9fff]{2,})\s*可能原因\s*(?P<tail>[^。；;,.，]+)")
+_LEADS_RE = re.compile(r"(?P<head>[A-Za-z][A-Za-z0-9_\-\s]*?|[\u4e00-\u9fff]{2,})\s*导致\s*(?P<tail>[^。；;,.，]+)")
 
 
 @dataclass
@@ -78,34 +80,41 @@ class _LocalCompletions:
             schema = re.search(r"schema=(.+)\nchunk=", user_message, flags=re.DOTALL)
             chunk = user_message.split("\nchunk=", 1)[-1]
             schema_body = json.loads(schema.group(1)) if schema else {}
-            pattern = (schema_body.get("patterns") or [None])[0]
-            relation_def = (schema_body.get("relations") or [None])[0]
-            source = pattern or relation_def or {}
-            head_type = source.get("head") or "entity"
-            relation = source.get("relation") or source.get("name") or "related_to"
-            tail_type = source.get("tail") or "entity"
+            relation_patterns = []
+            for pattern in schema_body.get("patterns") or []:
+                if pattern.get("relation") == "supports":
+                    relation_patterns.append((pattern.get("head") or "entity", "supports", pattern.get("tail") or "entity", _SUPPORTS_RE))
+            for relation_def in schema_body.get("relations") or []:
+                name = relation_def.get("name")
+                if name == "supports" and not any(item[1] == "supports" for item in relation_patterns):
+                    relation_patterns.append((relation_def.get("head") or "entity", name, relation_def.get("tail") or "entity", _SUPPORTS_RE))
+                elif name == "可能原因":
+                    relation_patterns.append((relation_def.get("head") or "entity", name, relation_def.get("tail") or "entity", _CAUSE_RE))
+                elif name == "导致":
+                    relation_patterns.append((relation_def.get("head") or "entity", name, relation_def.get("tail") or "entity", _LEADS_RE))
             nodes = []
             triples = []
             seen_nodes = set()
-            for match in _SUPPORTS_RE.finditer(chunk):
-                head = match.group("head").strip()
-                tails = [item.strip() for item in re.split(r"[、,，和及/]", match.group("tail")) if item.strip()]
-                if (head_type, head.lower()) not in seen_nodes:
-                    seen_nodes.add((head_type, head.lower()))
-                    nodes.append({"name": head, "type": head_type, "aliases": [], "confidence": 0.95, "source_chunk_id": chunk_id.group(1) if chunk_id else "chunk"})
-                for tail in tails:
-                    if (tail_type, tail.lower()) not in seen_nodes:
-                        seen_nodes.add((tail_type, tail.lower()))
-                        nodes.append({"name": tail, "type": tail_type, "aliases": [], "confidence": 0.95, "source_chunk_id": chunk_id.group(1) if chunk_id else "chunk"})
-                    triples.append({
-                        "head": head,
-                        "relation": relation,
-                        "tail": tail,
-                        "head_type": head_type,
-                        "tail_type": tail_type,
-                        "confidence": 0.95,
-                        "source_chunk_id": chunk_id.group(1) if chunk_id else "chunk",
-                    })
+            for head_type, relation, tail_type, regex in relation_patterns:
+                for match in regex.finditer(chunk):
+                    head = match.group("head").strip()
+                    tails = [item.strip() for item in re.split(r"[、,，和及/]", match.group("tail")) if item.strip()]
+                    if (head_type, head.lower()) not in seen_nodes:
+                        seen_nodes.add((head_type, head.lower()))
+                        nodes.append({"name": head, "type": head_type, "aliases": [], "confidence": 0.95, "source_chunk_id": chunk_id.group(1) if chunk_id else "chunk"})
+                    for tail in tails:
+                        if (tail_type, tail.lower()) not in seen_nodes:
+                            seen_nodes.add((tail_type, tail.lower()))
+                            nodes.append({"name": tail, "type": tail_type, "aliases": [], "confidence": 0.95, "source_chunk_id": chunk_id.group(1) if chunk_id else "chunk"})
+                        triples.append({
+                            "head": head,
+                            "relation": relation,
+                            "tail": tail,
+                            "head_type": head_type,
+                            "tail_type": tail_type,
+                            "confidence": 0.95,
+                            "source_chunk_id": chunk_id.group(1) if chunk_id else "chunk",
+                        })
             return _ChatResponse(choices=[_Choice(message=_Message(content=json.dumps({"nodes": nodes, "triples": triples}, ensure_ascii=False)))])
         if "RERANK_EVIDENCE_JSON" in user_message:
             rows = re.findall(r"^\s*\d+\.\s+id=([^\s]+)\s+source=([^\s]+).*?text=(.+)$", user_message, flags=re.MULTILINE)

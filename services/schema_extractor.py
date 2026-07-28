@@ -14,6 +14,8 @@ _SUPPORTS_RE = re.compile(
     r"(?P<head>[A-Za-z][A-Za-z0-9_\-\s]*?|[\u4e00-\u9fff]{2,})\s*(?:还)?(?:支持|具备|提供|supports?)\s*(?P<tail>[^。；;,.，]+)",
     re.IGNORECASE,
 )
+_CAUSE_RE = re.compile(r"(?P<head>[A-Za-z][A-Za-z0-9_\-\s]*?|[\u4e00-\u9fff]{2,})\s*可能原因\s*(?P<tail>[^。；;,.，]+)")
+_LEADS_RE = re.compile(r"(?P<head>[A-Za-z][A-Za-z0-9_\-\s]*?|[\u4e00-\u9fff]{2,})\s*导致\s*(?P<tail>[^。；;,.，]+)")
 
 
 class ExtractedNode(BaseModel):
@@ -64,41 +66,60 @@ def _split_tails(text: str) -> list[str]:
 
 
 def deterministic_extract(schema_body: dict[str, Any], chunk_id: str, chunk_text: str) -> SchemaExtractionResult:
-    pattern = _first_pattern(schema_body)
-    if pattern is None:
+    relation_defs = schema_body.get("relations") or []
+    patterns = schema_body.get("patterns") or []
+    relation_patterns: list[tuple[str, str, str, re.Pattern[str]]] = []
+
+    for pattern in patterns:
+        if str(pattern.get("relation")) == "supports":
+            relation_patterns.append((str(pattern.get("head") or "entity"), "supports", str(pattern.get("tail") or "entity"), _SUPPORTS_RE))
+    for relation_def in relation_defs:
+        name = str(relation_def.get("name") or "")
+        if name == "supports" and not any(item[1] == "supports" for item in relation_patterns):
+            relation_patterns.append((str(relation_def.get("head") or "entity"), name, str(relation_def.get("tail") or "entity"), _SUPPORTS_RE))
+        elif name == "可能原因":
+            relation_patterns.append((str(relation_def.get("head") or "entity"), name, str(relation_def.get("tail") or "entity"), _CAUSE_RE))
+        elif name == "导致":
+            relation_patterns.append((str(relation_def.get("head") or "entity"), name, str(relation_def.get("tail") or "entity"), _LEADS_RE))
+
+    if not relation_patterns:
+        pattern = _first_pattern(schema_body)
+        if pattern is not None:
+            relation_patterns.append((*pattern, _SUPPORTS_RE))
+    if not relation_patterns:
         return SchemaExtractionResult()
 
-    head_type, relation, tail_type = pattern
     nodes: dict[tuple[str, str], ExtractedNode] = {}
     triples: list[ExtractedTriple] = []
     seen_triples: set[tuple[str, str, str]] = set()
 
-    for match in _SUPPORTS_RE.finditer(chunk_text):
-        head = match.group("head").strip()
-        nodes.setdefault(
-            (head_type, head.lower()),
-            ExtractedNode(name=head, type=head_type, source_chunk_id=chunk_id),
-        )
-        for tail in _split_tails(match.group("tail")):
+    for head_type, relation, tail_type, regex in relation_patterns:
+        for match in regex.finditer(chunk_text):
+            head = match.group("head").strip()
             nodes.setdefault(
-                (tail_type, tail.lower()),
-                ExtractedNode(name=tail, type=tail_type, source_chunk_id=chunk_id),
+                (head_type, head.lower()),
+                ExtractedNode(name=head, type=head_type, source_chunk_id=chunk_id),
             )
-            key = (head.lower(), relation.lower(), tail.lower())
-            if key in seen_triples:
-                continue
-            seen_triples.add(key)
-            triples.append(
-                ExtractedTriple(
-                    head=head,
-                    relation=relation,
-                    tail=tail,
-                    head_type=head_type,
-                    tail_type=tail_type,
-                    confidence=0.95,
-                    source_chunk_id=chunk_id,
+            for tail in _split_tails(match.group("tail")):
+                nodes.setdefault(
+                    (tail_type, tail.lower()),
+                    ExtractedNode(name=tail, type=tail_type, source_chunk_id=chunk_id),
                 )
-            )
+                key = (head.lower(), relation.lower(), tail.lower())
+                if key in seen_triples:
+                    continue
+                seen_triples.add(key)
+                triples.append(
+                    ExtractedTriple(
+                        head=head,
+                        relation=relation,
+                        tail=tail,
+                        head_type=head_type,
+                        tail_type=tail_type,
+                        confidence=0.95,
+                        source_chunk_id=chunk_id,
+                    )
+                )
 
     return SchemaExtractionResult(nodes=list(nodes.values()), triples=triples)
 
