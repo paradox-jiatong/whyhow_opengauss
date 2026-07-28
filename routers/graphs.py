@@ -167,6 +167,8 @@ async def ask_graphrag_endpoint(
     top_k: int = Query(5, ge=1, le=20),
     document_id: UUID | None = Query(None),
     tags: str | None = Query(None),
+    routes: str | None = Query(None),
+    include_answer: bool = Query(True),
     session: AsyncSession = Depends(get_pg),
     llm_client: LLMClient = Depends(get_llm_client),
     api_key: str = Header(..., alias="x-api-key"),
@@ -177,6 +179,7 @@ async def ask_graphrag_endpoint(
         filters["document_id"] = document_id
     if tags:
         filters["tags"] = [tag.strip() for tag in tags.split(",") if tag.strip()]
+    enabled_routes = {route.strip() for route in routes.split(",") if route.strip()} if routes else None
     try:
         result = await query_graph(
             session=session,
@@ -186,6 +189,8 @@ async def ask_graphrag_endpoint(
             question=question,
             top_k=top_k,
             filters=filters,
+            enabled_routes=enabled_routes,
+            include_answer=include_answer,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

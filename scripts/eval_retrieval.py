@@ -30,7 +30,7 @@ def request(method: str, path: str, body: dict | None = None, *, base_url: str, 
         method=method,
         headers={"x-api-key": api_key, "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=90) as resp:
+    with urllib.request.urlopen(req, timeout=180) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -76,7 +76,14 @@ def _retrieved_items(evidence: list[dict]) -> list[str]:
     return out
 
 
-def evaluate(manifest_path: Path, qa_path: Path, k: int, limit: int | None = None) -> dict:
+def evaluate(
+    manifest_path: Path,
+    qa_path: Path,
+    k: int,
+    limit: int | None = None,
+    routes: list[str] | None = None,
+    include_answer: bool = True,
+) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     rows = read_jsonl(qa_path)
     if limit:
@@ -91,6 +98,10 @@ def evaluate(manifest_path: Path, qa_path: Path, k: int, limit: int | None = Non
             "question": row["question"],
             "top_k": k,
         }
+        if routes:
+            params["routes"] = ",".join(routes)
+        if not include_answer:
+            params["include_answer"] = "false"
         tags = (row.get("filters") or {}).get("tags") or []
         if tags:
             params["tags"] = ",".join(tags)
@@ -112,6 +123,7 @@ def evaluate(manifest_path: Path, qa_path: Path, k: int, limit: int | None = Non
         details.append({
             "id": row["id"],
             "type": row["type"],
+            "routes": routes or ["hybrid"],
             "latency_ms": round(elapsed_ms, 2),
             "gold": sorted(gold),
             "retrieved": retrieved,
@@ -135,10 +147,20 @@ def main() -> None:
     parser.add_argument("--qa", default=str(EVAL_DIR / "ops_qa_200.jsonl"))
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--routes", default=None, help="Comma-separated retrieval routes for ablation.")
+    parser.add_argument("--no-answer", action="store_true", help="Skip final answer generation and evaluate retrieval only.")
     parser.add_argument("--out", default=str(EVAL_DIR / "eval_results.json"))
     args = parser.parse_args()
 
-    output = evaluate(Path(args.manifest), Path(args.qa), k=args.k, limit=args.limit)
+    routes = [route.strip() for route in args.routes.split(",") if route.strip()] if args.routes else None
+    output = evaluate(
+        Path(args.manifest),
+        Path(args.qa),
+        k=args.k,
+        limit=args.limit,
+        routes=routes,
+        include_answer=not args.no_answer,
+    )
     Path(args.out).write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(output["metrics"], ensure_ascii=False, indent=2))
     print(f"Details: {args.out}")

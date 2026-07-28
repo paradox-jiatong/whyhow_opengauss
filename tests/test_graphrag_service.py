@@ -82,3 +82,14 @@ def test_timing_collector_records_stage_and_total_milliseconds():
     assert "total" in result
     assert result["embedding"] >= 0
     assert result["total"] >= result["embedding"]
+
+
+def test_fuse_rough_recall_candidates_can_filter_enabled_routes():
+    candidates = [
+        RetrievalCandidate(route="vector_chunk", source="chunk", text="vector hit", score=0.9, payload={"id": "c1"}),
+        RetrievalCandidate(route="keyword_chunk", source="chunk", text="keyword hit", score=0.9, payload={"id": "c2"}),
+    ]
+
+    fused = fuse_rough_recall_candidates(candidates, enabled_routes={"keyword_chunk"})
+
+    assert [item.payload["id"] for item in fused] == ["c2"]

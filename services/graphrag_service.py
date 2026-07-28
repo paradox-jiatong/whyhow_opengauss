@@ -79,10 +79,16 @@ def _candidate_key(item: RetrievalCandidate) -> tuple[str, str]:
     return item.source, str(item.payload.get("id") or item.text)
 
 
-def fuse_rough_recall_candidates(candidates: list[RetrievalCandidate]) -> list[RetrievalCandidate]:
+def fuse_rough_recall_candidates(
+    candidates: list[RetrievalCandidate],
+    *,
+    enabled_routes: set[str] | None = None,
+) -> list[RetrievalCandidate]:
     best: dict[tuple[str, str], RetrievalCandidate] = {}
     routes_by_key: dict[tuple[str, str], set[str]] = {}
     for item in candidates:
+        if enabled_routes is not None and item.route not in enabled_routes:
+            continue
         key = _candidate_key(item)
         routes_by_key.setdefault(key, set()).add(item.route)
         current = best.get(key)
@@ -324,6 +330,8 @@ async def query_graph(
     question: str,
     top_k: int,
     filters: dict[str, Any] | None = None,
+    enabled_routes: set[str] | None = None,
+    include_answer: bool = True,
 ) -> dict[str, Any]:
     timing = TimingCollector()
     with timing.stage("ensure_vector_support"):
@@ -335,31 +343,35 @@ async def query_graph(
     if not graph_row:
         raise ValueError("Graph not found")
 
+    needs_query_embedding = enabled_routes is None or bool({"vector_chunk", "graph_path"} & enabled_routes)
+    qv: list[float] = []
     with timing.stage("embedding"):
-        qv = (await embed_texts(llm_client=llm_client, texts=[question]))[0]
+        if needs_query_embedding:
+            qv = (await embed_texts(llm_client=llm_client, texts=[question]))[0]
     filters = filters or {}
     workspace_id = graph_row["workspace_id"]
     ws_bind = sa.bindparam("ws_id", workspace_id)
     candidates: list[RetrievalCandidate] = []
 
     with timing.stage("vector_chunk_recall"):
-        for row in await vector_search_chunks(
-            session,
-            user_id=user_id,
-            workspace_id=workspace_id,
-            query_vector=normalize_embedding(qv),
-            top_k=top_k * 2,
-            filters=filters,
-        ):
-            candidates.append(
-                RetrievalCandidate(
-                    route="vector_chunk",
-                    source="chunk",
-                    text=_chunk_text(row),
-                    score=float(row.get("score") or 0.0),
-                    payload={"id": str(row["id"])},
+        if enabled_routes is None or "vector_chunk" in enabled_routes:
+            for row in await vector_search_chunks(
+                session,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                query_vector=normalize_embedding(qv),
+                top_k=top_k * 2,
+                filters=filters,
+            ):
+                candidates.append(
+                    RetrievalCandidate(
+                        route="vector_chunk",
+                        source="chunk",
+                        text=_chunk_text(row),
+                        score=float(row.get("score") or 0.0),
+                        payload={"id": str(row["id"])},
+                    )
                 )
-            )
 
     with timing.stage("load_filtered_chunks"):
         chunk_rows = (await session.execute(
@@ -383,7 +395,7 @@ async def query_graph(
         for row in chunk_rows:
             chunk_text = row["content"] or str(row["content_obj"] or "")
             keyword_score = len(question_terms & _tokens(chunk_text))
-            if keyword_score:
+            if keyword_score and (enabled_routes is None or "keyword_chunk" in enabled_routes):
                 candidates.append(
                     RetrievalCandidate(
                         route="keyword_chunk",
@@ -393,18 +405,19 @@ async def query_graph(
                         payload={"id": str(row["id"])},
                     )
                 )
-            candidates.append(
-                RetrievalCandidate(
-                    route="predicate_chunk",
-                    source="chunk",
-                    text=chunk_text,
-                    score=0.1,
-                    payload={"id": str(row["id"])},
+            if enabled_routes is None or "predicate_chunk" in enabled_routes:
+                candidates.append(
+                    RetrievalCandidate(
+                        route="predicate_chunk",
+                        source="chunk",
+                        text=chunk_text,
+                        score=0.1,
+                        payload={"id": str(row["id"])},
+                    )
                 )
-            )
 
     with timing.stage("json_vector_fallback"):
-        if not any(item.route == "vector_chunk" for item in candidates):
+        if (enabled_routes is None or "vector_chunk" in enabled_routes) and not any(item.route == "vector_chunk" for item in candidates):
             for row in chunk_rows:
                 chunk_text = row["content"] or str(row["content_obj"] or "")
                 emb = row["embedding"]
@@ -422,51 +435,55 @@ async def query_graph(
                     )
 
     with timing.stage("vector_triple_recall"):
-        for row in await vector_search_triples(
-            session,
-            user_id=user_id,
-            graph_id=graph_id,
-            query_vector=normalize_embedding(qv),
-            top_k=top_k * 2,
-        ):
-            candidates.append(
-                RetrievalCandidate(
-                    route="graph_path",
-                    source="triple",
-                    text=f'{row["head"]} {row["relation_name"]} {row["tail"]}',
-                    score=float(row.get("score") or 0.0),
-                    payload={"id": str(row["id"]), "chunks": [str(c) for c in row["chunks"] or []]},
-                )
-            )
-
-    with timing.stage("graph_path_recall"):
-        candidates.extend(
-            await retrieve_graph_paths(
+        if enabled_routes is None or "graph_path" in enabled_routes:
+            for row in await vector_search_triples(
                 session,
                 user_id=user_id,
                 graph_id=graph_id,
-                question=question,
+                query_vector=normalize_embedding(qv),
                 top_k=top_k * 2,
-                max_hops=2,
+            ):
+                candidates.append(
+                    RetrievalCandidate(
+                        route="graph_path",
+                        source="triple",
+                        text=f'{row["head"]} {row["relation_name"]} {row["tail"]}',
+                        score=float(row.get("score") or 0.0),
+                        payload={"id": str(row["id"]), "chunks": [str(c) for c in row["chunks"] or []]},
+                    )
+                )
+
+    with timing.stage("graph_path_recall"):
+        if enabled_routes is None or "graph_path" in enabled_routes:
+            candidates.extend(
+                await retrieve_graph_paths(
+                    session,
+                    user_id=user_id,
+                    graph_id=graph_id,
+                    question=question,
+                    top_k=top_k * 2,
+                    max_hops=2,
+                )
             )
-        )
 
     hn = nodes.alias("hn")
     tn = nodes.alias("tn")
     with timing.stage("load_all_triples"):
-        triple_rows = (await session.execute(
-            sa.select(
-                triples.c.id,
-                triples.c.relation_name,
-                triples.c.chunks,
-                hn.c.name.label("head"),
-                hn.c.label.label("head_type"),
-                tn.c.name.label("tail"),
-                tn.c.label.label("tail_type"),
-            )
-            .select_from(triples.join(hn, triples.c.head_node_id == hn.c.id).join(tn, triples.c.tail_node_id == tn.c.id))
-            .where(triples.c.graph_id == graph_id, triples.c.created_by == user_id)
-        )).mappings().all()
+        triple_rows = []
+        if enabled_routes is None or "graph_path" in enabled_routes:
+            triple_rows = (await session.execute(
+                sa.select(
+                    triples.c.id,
+                    triples.c.relation_name,
+                    triples.c.chunks,
+                    hn.c.name.label("head"),
+                    hn.c.label.label("head_type"),
+                    tn.c.name.label("tail"),
+                    tn.c.label.label("tail_type"),
+                )
+                .select_from(triples.join(hn, triples.c.head_node_id == hn.c.id).join(tn, triples.c.tail_node_id == tn.c.id))
+                .where(triples.c.graph_id == graph_id, triples.c.created_by == user_id)
+            )).mappings().all()
 
         for row in triple_rows:
             text = f'{row["head"]} {row["relation_name"]} {row["tail"]}'
@@ -481,10 +498,12 @@ async def query_graph(
             )
 
     with timing.stage("load_matching_nodes"):
-        node_rows = (await session.execute(
-            sa.select(nodes.c.id, nodes.c.name, nodes.c.label, nodes.c.chunks)
-            .where(nodes.c.graph_id == graph_id, nodes.c.created_by == user_id)
-        )).mappings().all()
+        node_rows = []
+        if enabled_routes is None or "graph_path" in enabled_routes:
+            node_rows = (await session.execute(
+                sa.select(nodes.c.id, nodes.c.name, nodes.c.label, nodes.c.chunks)
+                .where(nodes.c.graph_id == graph_id, nodes.c.created_by == user_id)
+            )).mappings().all()
         for row in node_rows:
             text = f'{row["name"]} ({row["label"]})'
             if question_terms & _tokens(text):
@@ -501,24 +520,27 @@ async def query_graph(
     with timing.stage("fusion"):
         evidences = [
             Evidence(item.source, item.text, item.score, {"route": item.route, **item.payload})
-            for item in fuse_rough_recall_candidates(candidates)
+            for item in fuse_rough_recall_candidates(candidates, enabled_routes=enabled_routes)
         ]
     with timing.stage("llm_rerank"):
         ranked = await llm_rerank_evidence(llm_client, question=question, items=evidences, top_k=top_k)
     context = "\n".join(f"- [{item.source}] {item.text}" for item in ranked)
+    answer = ""
     with timing.stage("llm_answer"):
-        response = await llm_client.client.chat.completions.create(
-            model=llm_client.metadata.language_model_name or "local-demo",
-            messages=[
-                {"role": "system", "content": "Only answer using the supplied context."},
-                {"role": "user", "content": f"问题：{question}\n\n可用上下文：\n{context}"},
-            ],
-        )
+        if include_answer:
+            response = await llm_client.client.chat.completions.create(
+                model=llm_client.metadata.language_model_name or "local-demo",
+                messages=[
+                    {"role": "system", "content": "Only answer using the supplied context."},
+                    {"role": "user", "content": f"问题：{question}\n\n可用上下文：\n{context}"},
+                ],
+            )
+            answer = response.choices[0].message.content or ""
     timings_ms = timing.finish()
     logger.info("GraphRAG query timings graph_id=%s top_k=%s timings_ms=%s", graph_id, top_k, timings_ms)
 
     return {
-        "answer": response.choices[0].message.content,
+        "answer": answer,
         "evidence": [
             {"source": item.source, "text": item.text, "score": item.score, **item.payload}
             for item in ranked
