@@ -14,6 +14,38 @@ def _llm_client() -> LLMClient:
     return LLMClient(LocalLLMClient(), BYOOpenAIMetadata(language_model_name="local-demo", embedding_name="local-demo"))
 
 
+class _HangingChatCompletions:
+    async def create(self, **kwargs):
+        await asyncio.sleep(60)
+
+
+class _HangingClient:
+    class _Chat:
+        completions = _HangingChatCompletions()
+
+    chat = _Chat()
+
+
+class _RecordingChatCompletions:
+    def __init__(self):
+        self.kwargs = None
+
+    async def create(self, **kwargs):
+        self.kwargs = kwargs
+        return await LocalLLMClient().chat.completions.create(**kwargs)
+
+
+class _RecordingClient:
+    def __init__(self):
+        self.completions = _RecordingChatCompletions()
+
+        class _Chat:
+            pass
+
+        self.chat = _Chat()
+        self.chat.completions = self.completions
+
+
 def test_schema_guided_extractor_returns_validated_nodes_triples_and_confidence():
     async def run():
         schema = {
@@ -65,6 +97,59 @@ def test_schema_guided_extractor_handles_ops_cause_and_effect_relations():
             ("慢查询", "可能原因", "缺少索引"),
             ("缺少索引", "导致", "全表扫描"),
         ]
+
+    asyncio.run(run())
+
+
+def test_schema_guided_extractor_times_out_and_uses_deterministic_fallback():
+    async def run():
+        schema = {
+            "entities": [{"name": "database"}, {"name": "capability"}],
+            "relations": [{"name": "supports", "head": "database", "tail": "capability"}],
+            "patterns": [{"head": "database", "relation": "supports", "tail": "capability"}],
+        }
+        llm_client = LLMClient(
+            _HangingClient(),
+            BYOOpenAIMetadata(language_model_name="slow-model", embedding_name="local-demo"),
+        )
+
+        result = await SchemaGuidedExtractor().extract(
+            llm_client=llm_client,
+            schema_body=schema,
+            chunk_id="c_timeout",
+            chunk_text="openGauss 支持 SQL 查询。",
+            request_timeout=0.01,
+        )
+
+        assert [(triple.head, triple.relation, triple.tail) for triple in result.triples] == [
+            ("openGauss", "supports", "SQL 查询"),
+        ]
+
+    asyncio.run(run())
+
+
+def test_schema_guided_extractor_requests_json_mode_and_sdk_timeout():
+    async def run():
+        schema = {
+            "entities": [{"name": "database"}, {"name": "capability"}],
+            "relations": [{"name": "supports", "head": "database", "tail": "capability"}],
+            "patterns": [{"head": "database", "relation": "supports", "tail": "capability"}],
+        }
+        client = _RecordingClient()
+
+        await SchemaGuidedExtractor().extract(
+            llm_client=LLMClient(
+                client,
+                BYOOpenAIMetadata(language_model_name="gpt-test", embedding_name="local-demo"),
+            ),
+            schema_body=schema,
+            chunk_id="c_json",
+            chunk_text="openGauss 支持 SQL 查询。",
+            request_timeout=7,
+        )
+
+        assert client.completions.kwargs["response_format"] == {"type": "json_object"}
+        assert client.completions.kwargs["timeout"] == 7
 
     asyncio.run(run())
 

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import asyncio
+import logging
 import re
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
 from whyhow_api.models.common import LLMClient
+
+logger = logging.getLogger(__name__)
 
 _SUPPORTS_RE = re.compile(
     r"(?P<head>[A-Za-z][A-Za-z0-9_\-\s]*?|[\u4e00-\u9fff]{2,})\s*(?:还)?(?:支持|具备|提供|supports?)\s*(?P<tail>[^。；;,.，]+)",
@@ -133,26 +137,35 @@ class SchemaGuidedExtractor:
         chunk_text: str,
         *,
         min_confidence: float = 0.5,
+        request_timeout: float = 30.0,
     ) -> SchemaExtractionResult:
         try:
-            response = await llm_client.client.chat.completions.create(
-                model=llm_client.metadata.language_model_name or "local-demo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Extract schema-constrained knowledge. Return only JSON matching {nodes, triples}.",
-                    },
-                    {
-                        "role": "user",
-                        "content": "SCHEMA_EXTRACT_JSON\n"
-                        f"chunk_id={chunk_id}\n"
-                        f"schema={json.dumps(schema_body, ensure_ascii=False)}\n"
-                        f"chunk={chunk_text}",
-                    },
-                ],
+            response = await asyncio.wait_for(
+                llm_client.client.chat.completions.create(
+                    model=llm_client.metadata.language_model_name or "local-demo",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "Extract schema-constrained knowledge. Return only JSON matching {nodes, triples}.",
+                        },
+                        {
+                            "role": "user",
+                            "content": "SCHEMA_EXTRACT_JSON\n"
+                            f"chunk_id={chunk_id}\n"
+                            f"schema={json.dumps(schema_body, ensure_ascii=False)}\n"
+                            f"chunk={chunk_text}",
+                        },
+                    ],
+                    temperature=0,
+                    max_tokens=1200,
+                    response_format={"type": "json_object"},
+                    timeout=request_timeout,
+                ),
+                timeout=request_timeout,
             )
             result = SchemaExtractionResult.model_validate_json(response.choices[0].message.content or "{}")
-        except (AttributeError, ValidationError, json.JSONDecodeError, Exception):
+        except (AttributeError, ValidationError, json.JSONDecodeError, Exception) as exc:
+            logger.warning("Schema-guided extraction fell back for chunk %s: %s", chunk_id, type(exc).__name__)
             result = deterministic_extract(schema_body, chunk_id, chunk_text)
 
         return SchemaExtractionResult(

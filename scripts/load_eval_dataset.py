@@ -18,7 +18,15 @@ BASE_URL = "http://127.0.0.1:8000"
 API_KEY = "demo-api-key"
 
 
-def request(method: str, path: str, body: dict | None = None, *, base_url: str, api_key: str) -> dict:
+def request(
+    method: str,
+    path: str,
+    body: dict | None = None,
+    *,
+    base_url: str,
+    api_key: str,
+    timeout: int,
+) -> dict:
     data = None if body is None else json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         base_url + path,
@@ -26,7 +34,7 @@ def request(method: str, path: str, body: dict | None = None, *, base_url: str, 
         method=method,
         headers={"x-api-key": api_key, "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -60,9 +68,16 @@ def _schema_body() -> dict:
     }
 
 
-def load_dataset(base_url: str, api_key: str, manifest_path: Path) -> dict:
+def load_dataset(base_url: str, api_key: str, manifest_path: Path, timeout: int) -> dict:
     workspace_name = f"ops-eval-{uuid4().hex[:8]}"
-    workspace = request("POST", "/workspaces", {"name": workspace_name}, base_url=base_url, api_key=api_key)["workspace"]
+    workspace = request(
+        "POST",
+        "/workspaces",
+        {"name": workspace_name},
+        base_url=base_url,
+        api_key=api_key,
+        timeout=timeout,
+    )["workspace"]
     workspace_id = workspace["id"]
 
     chunk_manifest: dict[str, str] = {}
@@ -88,6 +103,7 @@ def load_dataset(base_url: str, api_key: str, manifest_path: Path) -> dict:
             {"chunks_in": chunks_in},
             base_url=base_url,
             api_key=api_key,
+            timeout=timeout,
         )
         for chunk_key, row in zip(chunk_keys, result["chunks"]):
             chunk_manifest[chunk_key] = row.get("_id") or row.get("id")
@@ -99,6 +115,7 @@ def load_dataset(base_url: str, api_key: str, manifest_path: Path) -> dict:
         _schema_body(),
         base_url=base_url,
         api_key=api_key,
+        timeout=timeout,
     )["schemas"][0]
     graph = request(
         "POST",
@@ -106,6 +123,7 @@ def load_dataset(base_url: str, api_key: str, manifest_path: Path) -> dict:
         + urllib.parse.urlencode({"workspace_id": workspace_id, "schema_id": schema["id"], "name": f"ops-eval-graph-{uuid4().hex[:8]}", "chunk_limit": 1000}),
         base_url=base_url,
         api_key=api_key,
+        timeout=timeout,
     )
 
     manifest = {
@@ -133,9 +151,10 @@ def main() -> None:
     parser.add_argument("--base-url", default=BASE_URL)
     parser.add_argument("--api-key", default=API_KEY)
     parser.add_argument("--manifest", default=str(EVAL_DIR / "run_manifest.json"))
+    parser.add_argument("--timeout", type=int, default=300)
     args = parser.parse_args()
 
-    manifest = load_dataset(args.base_url, args.api_key, Path(args.manifest))
+    manifest = load_dataset(args.base_url, args.api_key, Path(args.manifest), args.timeout)
     print(json.dumps(manifest["graph_build"], ensure_ascii=False, indent=2))
     print(f"Manifest: {args.manifest}")
 
