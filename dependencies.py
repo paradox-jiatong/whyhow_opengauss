@@ -106,6 +106,7 @@ async def get_llm_client(
     meta = BYOOpenAIMetadata(
         language_model_name=settings.generative.openai.model,
         embedding_name=settings.embedding.openai.model,
+        embedding_dimensions=settings.embedding.openai.dimensions,
         temperature=settings.generative.openai.temperature,
         max_tokens=settings.generative.openai.max_tokens,
     )

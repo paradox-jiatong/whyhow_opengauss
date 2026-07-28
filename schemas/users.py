@@ -17,6 +17,7 @@ class WhyHowOpenAIMetadata(BaseModel):
     """Metadata model for WhyHow OpenAI provider."""
     language_model_name: Optional[str] = None
     embedding_name: Optional[str] = None
+    embedding_dimensions: Optional[int] = None
 
 
 class BYOAzureOpenAIMetadata(BaseModel):
@@ -25,12 +26,14 @@ class BYOAzureOpenAIMetadata(BaseModel):
     azure_endpoint: Optional[str] = None
     language_model_name: Optional[str] = None
     embedding_name: Optional[str] = None
+    embedding_dimensions: Optional[int] = None
 
 
 class BYOOpenAIMetadata(BaseModel):
     """Metadata model for BYO OpenAI provider."""
     language_model_name: Optional[str] = None
     embedding_name: Optional[str] = None
+    embedding_dimensions: Optional[int] = None
 
 
 class Provider(BaseModel):

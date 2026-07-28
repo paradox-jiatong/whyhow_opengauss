@@ -148,6 +148,7 @@ class SettingsEmbeddingOpenAI(BaseModel):
 
     api_key: SecretStr | None = None
     model: str = "text-embedding-3-large"
+    dimensions: int = 512
 
     model_config = SettingsConfigDict(frozen=True)
 

@@ -46,7 +46,7 @@ async def embed_texts(
         response = await llm_client.client.embeddings.create(
             input=batch,
             model=(llm_client.metadata.embedding_name or "text-embedding-3-small"),
-            dimensions=1536,
+            dimensions=(llm_client.metadata.embedding_dimensions or 512),
         )
         all_embeddings.extend([d.embedding for d in response.data])
 
