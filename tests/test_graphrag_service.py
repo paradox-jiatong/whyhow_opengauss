@@ -4,6 +4,7 @@ from whyhow_api.services.graphrag_service import (
     Evidence,
     RetrievalCandidate,
     TimingCollector,
+    bm25_score_chunks,
     extract_schema_guided_triples,
     fuse_rough_recall_candidates,
     rerank_evidence,
@@ -93,3 +94,22 @@ def test_fuse_rough_recall_candidates_can_filter_enabled_routes():
     fused = fuse_rough_recall_candidates(candidates, enabled_routes={"keyword_chunk"})
 
     assert [item.payload["id"] for item in fused] == ["c2"]
+
+
+def test_bm25_keyword_scoring_prefers_discriminative_terms_over_long_generic_text():
+    rows = [
+        {
+            "id": "generic",
+            "content": "数据库 查询 系统 运维 " * 30,
+            "content_obj": None,
+        },
+        {
+            "id": "specific",
+            "content": "shared_buffers 过低会导致缓存命中率下降",
+            "content_obj": None,
+        },
+    ]
+
+    scored = bm25_score_chunks("shared_buffers 设置过低会导致什么", rows)
+
+    assert [item.payload["id"] for item in scored] == ["specific"]

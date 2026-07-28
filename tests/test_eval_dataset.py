@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from whyhow_api.services.eval_metrics import compute_ranking_metrics, percentile
+from scripts.eval_retrieval import _gold_chunk_items, _retrieved_chunk_items, _retrieved_graph_items
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,3 +74,23 @@ def test_ranking_metrics_and_percentile_are_stable():
     assert metrics["recall@2"] == 2 / 3
     assert metrics["mrr@2"] == (1 / 2 + 1) / 3
     assert percentile([10, 20, 30, 40], 95) == 40
+
+
+def test_eval_maps_graph_evidence_to_source_chunks_for_primary_metrics():
+    row = {
+        "gold_chunk_keys": ["slow_query_main"],
+        "gold_triples": [["慢查询", "supports", "执行计划分析"]],
+        "gold_paths": [["慢查询", "supports", "执行计划分析"]],
+    }
+    manifest = {"chunk_key_to_id": {"slow_query_main": "chunk-1"}}
+    evidence = [
+        {"source": "triple", "text": "慢查询 supports 执行计划分析", "chunks": ["chunk-1"]},
+        {"source": "path", "text": "慢查询 -> supports -> 执行计划分析", "chunks": ["chunk-2"]},
+    ]
+
+    assert _gold_chunk_items(row, manifest) == {"chunk:chunk-1"}
+    assert _retrieved_chunk_items(evidence) == ["chunk:chunk-1", "chunk:chunk-2"]
+    assert _retrieved_graph_items(evidence) == [
+        "triple_text:慢查询 支持 执行计划分析",
+        "path_text:慢查询 -> 支持 -> 执行计划分析",
+    ]

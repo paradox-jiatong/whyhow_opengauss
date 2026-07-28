@@ -4,3 +4,5 @@ __pycache__/
 .env
 eval/run_manifest.json
 eval/eval_results*.json
+eval/ablation*.json
+eval/ablation*.log

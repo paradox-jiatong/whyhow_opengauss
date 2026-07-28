@@ -63,12 +63,57 @@ def _gold_items(row: dict, manifest: dict) -> set[str]:
     return gold
 
 
+def _gold_chunk_items(row: dict, manifest: dict) -> set[str]:
+    gold = set()
+    for key in row.get("gold_chunk_keys") or []:
+        chunk_id = manifest.get("chunk_key_to_id", {}).get(key)
+        if chunk_id:
+            gold.add(f"chunk:{chunk_id}")
+    return gold
+
+
+def _gold_graph_items(row: dict) -> set[str]:
+    gold = set()
+    for triple in row.get("gold_triples") or []:
+        gold.add(f"triple_text:{_triple_text(triple)}")
+    for path in row.get("gold_paths") or []:
+        gold.add(f"path_text:{_path_text(path)}")
+    return gold
+
+
 def _retrieved_items(evidence: list[dict]) -> list[str]:
     out: list[str] = []
     for item in evidence:
         source = item.get("source")
         if source == "chunk" and item.get("id"):
             out.append(f"chunk:{item['id']}")
+        if source == "triple":
+            out.append(f"triple_text:{_triple_text(str(item.get('text', '')).split())}")
+        if source == "path":
+            out.append(f"path_text:{_path_text([part.strip() for part in str(item.get('text', '')).split('->')])}")
+    return out
+
+
+def _retrieved_chunk_items(evidence: list[dict]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in evidence:
+        chunk_ids = []
+        if item.get("source") == "chunk" and item.get("id"):
+            chunk_ids.append(str(item["id"]))
+        chunk_ids.extend(str(chunk_id) for chunk_id in item.get("chunks") or [])
+        for chunk_id in chunk_ids:
+            key = f"chunk:{chunk_id}"
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+    return out
+
+
+def _retrieved_graph_items(evidence: list[dict]) -> list[str]:
+    out: list[str] = []
+    for item in evidence:
+        source = item.get("source")
         if source == "triple":
             out.append(f"triple_text:{_triple_text(str(item.get('text', '')).split())}")
         if source == "path":
@@ -90,6 +135,7 @@ def evaluate(
         rows = rows[:limit]
 
     cases_by_type: dict[str, list[dict]] = {}
+    graph_cases_by_type: dict[str, list[dict]] = {}
     latencies_ms: list[float] = []
     details = []
 
@@ -116,10 +162,15 @@ def evaluate(
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         latencies_ms.append(elapsed_ms)
 
-        gold = _gold_items(row, manifest)
-        retrieved = _retrieved_items(result.get("evidence") or [])
+        evidence = result.get("evidence") or []
+        gold = _gold_chunk_items(row, manifest)
+        retrieved = _retrieved_chunk_items(evidence)
+        graph_gold = _gold_graph_items(row)
+        graph_retrieved = _retrieved_graph_items(evidence)
         case = {"gold": gold, "retrieved": retrieved}
         cases_by_type.setdefault(row["type"], []).append(case)
+        if graph_gold:
+            graph_cases_by_type.setdefault(row["type"], []).append({"gold": graph_gold, "retrieved": graph_retrieved})
         details.append({
             "id": row["id"],
             "type": row["type"],
@@ -127,12 +178,18 @@ def evaluate(
             "latency_ms": round(elapsed_ms, 2),
             "gold": sorted(gold),
             "retrieved": retrieved,
+            "gold_graph": sorted(graph_gold),
+            "retrieved_graph": graph_retrieved,
             "answer": result.get("answer"),
         })
 
     metrics = {"overall": compute_ranking_metrics([case for cases in cases_by_type.values() for case in cases], k=k)}
     for typ, cases in sorted(cases_by_type.items()):
         metrics[typ] = compute_ranking_metrics(cases, k=k)
+    graph_cases = [case for cases in graph_cases_by_type.values() for case in cases]
+    metrics["graph_evidence"] = {"overall": compute_ranking_metrics(graph_cases, k=k)}
+    for typ, cases in sorted(graph_cases_by_type.items()):
+        metrics["graph_evidence"][typ] = compute_ranking_metrics(cases, k=k)
     metrics["latency_ms"] = {
         "p50": round(percentile(latencies_ms, 50), 2),
         "p95": round(percentile(latencies_ms, 95), 2),

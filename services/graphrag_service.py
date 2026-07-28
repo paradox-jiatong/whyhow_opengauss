@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+from collections import Counter
 from contextlib import contextmanager
 from typing import Any
 from uuid import UUID, uuid4
@@ -40,6 +41,50 @@ def _normalize_entity(text: str) -> str:
 
 def _tokens(text: str) -> set[str]:
     return {_normalize_entity(token) for token in _WORD_RE.findall(text) if _normalize_entity(token)}
+
+
+def _token_list(text: str) -> list[str]:
+    return [_normalize_entity(token) for token in _WORD_RE.findall(text) if _normalize_entity(token)]
+
+
+def bm25_score_chunks(question: str, rows: list[dict[str, Any]], *, k1: float = 1.5, b: float = 0.75) -> list[RetrievalCandidate]:
+    query_terms = _token_list(question)
+    if not query_terms or not rows:
+        return []
+
+    documents = []
+    document_frequency: Counter[str] = Counter()
+    for row in rows:
+        text = _chunk_text(row)
+        terms = _token_list(text)
+        term_counts = Counter(terms)
+        documents.append((row, text, terms, term_counts))
+        document_frequency.update(set(terms))
+
+    avg_len = sum(len(terms) for _, _, terms, _ in documents) / max(len(documents), 1)
+    total_docs = len(documents)
+    candidates: list[RetrievalCandidate] = []
+    for row, text, terms, term_counts in documents:
+        doc_len = max(len(terms), 1)
+        score = 0.0
+        for term in query_terms:
+            tf = term_counts.get(term, 0)
+            if tf == 0:
+                continue
+            idf = math.log(1 + (total_docs - document_frequency[term] + 0.5) / (document_frequency[term] + 0.5))
+            denom = tf + k1 * (1 - b + b * doc_len / max(avg_len, 1e-9))
+            score += idf * (tf * (k1 + 1)) / denom
+        if score > 0:
+            candidates.append(
+                RetrievalCandidate(
+                    route="keyword_chunk",
+                    source="chunk",
+                    text=text,
+                    score=score,
+                    payload={"id": str(row["id"])},
+                )
+            )
+    return sorted(candidates, key=lambda item: item.score, reverse=True)
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -392,19 +437,10 @@ async def query_graph(
 
     question_terms = _tokens(question)
     with timing.stage("keyword_predicate_recall"):
+        if enabled_routes is None or "keyword_chunk" in enabled_routes:
+            candidates.extend(bm25_score_chunks(question, list(chunk_rows))[: top_k * 2])
         for row in chunk_rows:
             chunk_text = row["content"] or str(row["content_obj"] or "")
-            keyword_score = len(question_terms & _tokens(chunk_text))
-            if keyword_score and (enabled_routes is None or "keyword_chunk" in enabled_routes):
-                candidates.append(
-                    RetrievalCandidate(
-                        route="keyword_chunk",
-                        source="chunk",
-                        text=chunk_text,
-                        score=float(keyword_score),
-                        payload={"id": str(row["id"])},
-                    )
-                )
             if enabled_routes is None or "predicate_chunk" in enabled_routes:
                 candidates.append(
                     RetrievalCandidate(
