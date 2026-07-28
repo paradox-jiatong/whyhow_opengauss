@@ -122,6 +122,7 @@ The local openGauss Lite image does not include a pgvector-compatible extension,
 The repository includes a database operations evaluation set under `eval/`:
 
 - `eval/docs/*.md`: raw Markdown documents for chunking and extraction.
+- `eval/chunks_manifest.jsonl`: semantic chunks generated from the raw documents, including stable chunk keys, text, tags, and metadata.
 - `eval/gold_graph.jsonl`: expected triples for graph extraction checks.
 - `eval/ops_qa_200.jsonl`: 200 labeled QA cases split as 80 vector, 40 keyword, 40 predicate, and 40 graph-path questions.
 

@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from whyhow_api.services.semantic_chunker import semantic_chunk_text
+
 EVAL_DIR = ROOT / "eval"
 DOCS_DIR = EVAL_DIR / "docs"
 
@@ -198,6 +203,31 @@ def _qa_rows() -> list[dict]:
     return rows
 
 
+def _chunk_rows() -> list[dict]:
+    rows: list[dict] = []
+    for topic in TOPICS:
+        doc_id = topic["doc_id"]
+        text = _doc_text(topic)
+        seen_keys: dict[str, int] = {}
+        for chunk in semantic_chunk_text(text, max_chars=900, overlap_chars=120):
+            section = str(chunk.metadata.get("section") or "root")
+            window = int(chunk.metadata.get("window") or 0)
+            base_key = f"{doc_id}#{section}"
+            seen_count = seen_keys.get(base_key, 0)
+            seen_keys[base_key] = seen_count + 1
+            suffix = "" if window == 0 and seen_count == 0 else f":{max(window, seen_count)}"
+            rows.append({
+                "chunk_key": f"{base_key}{suffix}",
+                "doc_id": doc_id,
+                "module": topic["module"],
+                "section": section,
+                "text": chunk.text,
+                "tags": [topic["tag"], topic["module"], doc_id],
+                "metadata": {"section": section, "window": window},
+            })
+    return rows
+
+
 def main() -> None:
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     for topic in TOPICS:
@@ -210,8 +240,11 @@ def main() -> None:
     with (EVAL_DIR / "ops_qa_200.jsonl").open("w", encoding="utf-8") as f:
         for row in _qa_rows():
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    with (EVAL_DIR / "chunks_manifest.jsonl").open("w", encoding="utf-8") as f:
+        for row in _chunk_rows():
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    print("Generated eval/docs, eval/gold_graph.jsonl, eval/ops_qa_200.jsonl")
+    print("Generated eval/docs, eval/chunks_manifest.jsonl, eval/gold_graph.jsonl, eval/ops_qa_200.jsonl")
 
 
 if __name__ == "__main__":

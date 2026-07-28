@@ -13,8 +13,6 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from whyhow_api.services.semantic_chunker import semantic_chunk_text
-
 EVAL_DIR = ROOT / "eval"
 BASE_URL = "http://127.0.0.1:8000"
 API_KEY = "demo-api-key"
@@ -37,6 +35,10 @@ def _doc_metadata(path: Path) -> tuple[str, str, str]:
     module = next((line.split("：", 1)[1].strip() for line in text.splitlines() if line.startswith("模块：")), "ops")
     tag = next((line.split("：", 1)[1].strip() for line in text.splitlines() if line.startswith("标签：")), path.stem)
     return text, module, tag
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _schema_body() -> dict:
@@ -65,19 +67,20 @@ def load_dataset(base_url: str, api_key: str, manifest_path: Path) -> dict:
 
     chunk_manifest: dict[str, str] = {}
     docs = []
-    for path in sorted((EVAL_DIR / "docs").glob("*.md")):
-        doc_id = path.stem
-        text, module, tag = _doc_metadata(path)
+    chunks_by_doc: dict[str, list[dict]] = {}
+    for row in _read_jsonl(EVAL_DIR / "chunks_manifest.jsonl"):
+        chunks_by_doc.setdefault(row["doc_id"], []).append(row)
+
+    for doc_id, manifest_rows in sorted(chunks_by_doc.items()):
         chunks_in = []
         chunk_keys = []
-        for chunk in semantic_chunk_text(text, max_chars=900, overlap_chars=120):
-            section = str(chunk.metadata.get("section") or "root")
-            chunk_key = f"{doc_id}#{section}"
+        for row in manifest_rows:
+            chunk_key = row["chunk_key"]
             chunk_keys.append(chunk_key)
             chunks_in.append({
-                "content": chunk.text,
-                "tags": [tag, module, doc_id],
-                "user_metadata": {"doc_id": doc_id, "module": module, "section": section},
+                "content": row["text"],
+                "tags": row["tags"],
+                "user_metadata": {"doc_id": doc_id, "module": row["module"], "section": row["section"]},
             })
         result = request(
             "POST",
@@ -88,7 +91,7 @@ def load_dataset(base_url: str, api_key: str, manifest_path: Path) -> dict:
         )
         for chunk_key, row in zip(chunk_keys, result["chunks"]):
             chunk_manifest[chunk_key] = row.get("_id") or row.get("id")
-        docs.append({"doc_id": doc_id, "module": module, "tag": tag, "chunks": chunk_keys})
+        docs.append({"doc_id": doc_id, "chunks": chunk_keys})
 
     schema = request(
         "POST",

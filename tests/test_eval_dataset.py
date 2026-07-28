@@ -41,6 +41,25 @@ def test_gold_graph_references_existing_raw_docs():
     assert all(len(row["triple"]) == 3 for row in rows)
 
 
+def test_chunks_manifest_records_semantic_chunks_and_covers_gold_keys():
+    chunks = _read_jsonl(ROOT / "eval" / "chunks_manifest.jsonl")
+    qa_rows = _read_jsonl(ROOT / "eval" / "ops_qa_200.jsonl")
+    chunk_keys = {row["chunk_key"] for row in chunks}
+
+    assert len(chunk_keys) == len(chunks)
+    assert len(chunks) >= 24
+    for row in chunks:
+        assert row["chunk_key"]
+        assert row["doc_id"]
+        assert row["section"]
+        assert row["text"]
+        assert row["tags"]
+        assert "window" in row["metadata"]
+
+    for qa in qa_rows:
+        assert set(qa["gold_chunk_keys"]).issubset(chunk_keys)
+
+
 def test_ranking_metrics_and_percentile_are_stable():
     cases = [
         {"gold": {"a"}, "retrieved": ["x", "a"]},
