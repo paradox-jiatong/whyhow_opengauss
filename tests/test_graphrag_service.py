@@ -3,6 +3,7 @@ import asyncio
 from whyhow_api.services.graphrag_service import (
     Evidence,
     RetrievalCandidate,
+    TimingCollector,
     extract_schema_guided_triples,
     fuse_rough_recall_candidates,
     rerank_evidence,
@@ -68,3 +69,16 @@ def test_fuse_rough_recall_candidates_keeps_four_routes_and_deduplicates():
     }
     assert len([item for item in fused if item.payload["id"] == "c1"]) == 1
     assert fused[0].route == "vector_chunk"
+
+
+def test_timing_collector_records_stage_and_total_milliseconds():
+    timing = TimingCollector()
+
+    with timing.stage("embedding"):
+        pass
+    result = timing.finish()
+
+    assert "embedding" in result
+    assert "total" in result
+    assert result["embedding"] >= 0
+    assert result["total"] >= result["embedding"]
