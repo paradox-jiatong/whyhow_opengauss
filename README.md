@@ -9,7 +9,7 @@ WhyHow 与openGauss向量数据库适配，包括简单知识文档导入、对�
 ### 下载与部署
 #### 1. 所需环境
 - 2vCPUs | 4GiB | s7.large.2 CentOS 7.6 64bit
-- Docker / Docker Compose
+- Docker
 - Python 3.11（强烈建议用conda创建虚拟环境）
 - openGauss 3.x（docker部署）
 - OpenAI API Key（用于 Embedding/LLM）
@@ -17,7 +17,7 @@ WhyHow 与openGauss向量数据库适配，包括简单知识文档导入、对�
 #### 2. 下载代码
 ```shell
 git clone https://gitcode.com/paradox/whyhow_opengauss.git
-cd knowledge-graph-studio
+cd whyhow_opengauss
 pip install -r requirements.txt
 ```
 #### 3. openGauss 部署
@@ -86,7 +86,7 @@ WHYHOW__OPENGAUSS__ECHO_SQL=<是否打印 SQL 语句>
 当所有的配置完成，就可以启动API服务器开始服务：
 
 ```shell
-uvicorn whyhow_api.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 
@@ -106,7 +106,7 @@ docker run -d --name whyhow-opengauss \
   swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/enmotech/opengauss-lite:latest
 
 .venv/bin/python scripts/init_db.py
-.venv/bin/python -m uvicorn whyhow_api.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
 .venv/bin/python scripts/run_demo.py
 .venv/bin/python scripts/run_graphrag_demo.py
 ```
@@ -116,6 +116,8 @@ If no OpenAI API key is configured, the service uses the deterministic local dem
 The local openGauss Lite image does not include a pgvector-compatible extension, so the demo stores vectors in `FLOAT8[]` columns and ranks them with the database-side `whyhow_cosine_distance` function.
 
 `run_graphrag_demo.py` verifies the GraphRAG path: schema creation, schema-guided structured extraction, entity resolution with provenance merge, node/triple persistence, four-route rough recall (`vector_chunk`, `keyword_chunk`, `predicate_chunk`, `graph_path`), 1-hop/2-hop path evidence, chunk + node + triple/path fusion, and structured LLM reranking.
+
+More script-level usage is documented in [`docs/Python脚本说明.md`](docs/Python脚本说明.md), including database initialization, local demos, evaluation dataset generation, retrieval evaluation, and ablation runs.
 
 #### Ops Evaluation Dataset
 
@@ -131,7 +133,7 @@ Run the end-to-end evaluation through the local API:
 ```shell
 .venv/bin/python scripts/generate_ops_eval_dataset.py
 .venv/bin/python scripts/load_eval_dataset.py
-.venv/bin/python scripts/eval_retrieval.py --k 5 --limit 1
+.venv/bin/python scripts/eval_retrieval.py --k 5 --limit 1 --no-answer
 ```
 
 Omit `--limit` to run all 200 questions. The API evaluation intentionally runs the full GraphRAG path and can be slow in the local openGauss Lite demo. The script reports Hit@K, Recall@K, MRR@K, and P50/P95 latency, and writes details to `eval/eval_results.json`.
